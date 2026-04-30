@@ -41,18 +41,21 @@ export function useMarketConnection(username: string | null) {
           case 'news_alert':
             setNewsAlert(message.data);
             break;
+          case 'portfolio_update':
+            updatePortfolio(message.data.fiat_balance, message.data.asset_quantity);
+            break;
           case 'TRADE_RESULT':
             if (message.data.status === 'SUCCESS') {
               updatePortfolio(message.data.new_fiat_balance, message.data.new_asset_quantity);
               addMyTrade({
                 timestamp: Date.now(),
-                symbol: 'SIM',
+                symbol: 'ORIS',
                 price: message.data.executed_price,
                 quantity: message.data.quantity,
                 side: message.data.action,
                 trade_id: message.data.trade_id,
               });
-              toast.success(`Executed: ${message.data.action} ${message.data.quantity} SIM at $${message.data.executed_price.toFixed(2)}`);
+              toast.success(`Executed: ${message.data.action} ${message.data.quantity} ORIS at $${message.data.executed_price.toFixed(2)}`);
             } else {
               toast.error(`Trade Failed: ${message.data.message || 'Unknown error'}`);
             }
@@ -89,7 +92,7 @@ export const sendMarketOrder = (action: 'BUY' | 'SELL', quantity: number) => {
       type: 'MARKET_ORDER',
       data: {
         action,
-        symbol: 'SIM',
+        symbol: 'ORIS',
         quantity
       }
     }));

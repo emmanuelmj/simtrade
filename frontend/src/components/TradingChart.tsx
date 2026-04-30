@@ -104,7 +104,7 @@ export default function TradingChart() {
     <div className="w-full h-full relative">
       <div className="absolute top-4 left-4 z-10 pointer-events-none">
         <h2 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
-          $SIM <span className="text-zinc-400 font-normal">Synthex Index</span>
+          $ORIS <span className="text-zinc-400 font-normal">Synthex Index</span>
         </h2>
         {orderbook && (
           <div className="text-2xl font-mono mt-1 text-zinc-900 tracking-tight">

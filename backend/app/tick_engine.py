@@ -96,7 +96,7 @@ async def house_bot_requote(
     return float(bid_price), float(ask_price)
 
 
-def _build_orderbook_payload(best_bid: float, best_ask: float, quantity: int, symbol: str = "SIM") -> dict:
+def _build_orderbook_payload(best_bid: float, best_ask: float, quantity: int, symbol: str = "ORIS") -> dict:
     """Construct the orderbook_update WebSocket payload per 5-API-Design.md."""
     return {
         "type": "orderbook_update",

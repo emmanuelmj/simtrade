@@ -5,6 +5,10 @@ import { useMarketStore } from '../../store/marketStore';
 export default function PortfolioPage() {
   const portfolio = useMarketStore((state) => state.portfolio);
   const myTrades = useMarketStore((state) => state.myTrades);
+  const orderbook = useMarketStore((state) => state.orderbook);
+
+  const currentPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
+  const totalValue = portfolio ? portfolio.oris * currentPrice : 0;
 
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden bg-zinc-50 relative">
@@ -32,9 +36,37 @@ export default function PortfolioPage() {
               <div className="bg-zinc-50 rounded-xl p-6 border border-zinc-100 flex flex-col justify-center shadow-sm">
                 <span className="text-sm font-medium text-zinc-500 mb-2">Total $ORIS</span>
                 <span className="text-3xl font-mono font-semibold text-zinc-900 tracking-tight">
-                  {portfolio ? portfolio.oris.toLocaleString() : '0'} <span className="text-lg font-sans text-zinc-400 font-medium ml-1">SIM</span>
+                  {portfolio ? portfolio.oris.toLocaleString() : '0'} <span className="text-lg font-sans text-zinc-400 font-medium ml-1">ORIS</span>
                 </span>
               </div>
+            </div>
+          </section>
+
+          <section className="bg-white/70 backdrop-blur-xl rounded-2xl border border-zinc-200 overflow-hidden shadow-sm p-6">
+            <h2 className="text-lg font-semibold text-zinc-900 mb-6">Holdings</h2>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-xs text-zinc-500 font-medium">
+                    <th className="pb-3 font-medium">Asset</th>
+                    <th className="pb-3 font-medium text-right">Balance</th>
+                    <th className="pb-3 font-medium text-right">Current Price</th>
+                    <th className="pb-3 font-medium text-right">Total Value</th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm text-zinc-900">
+                  <tr className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50 transition-colors">
+                    <td className="py-3 font-medium flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-zinc-900 flex items-center justify-center text-white text-[10px] font-bold">ORIS</div>
+                      $ORIS
+                    </td>
+                    <td className="py-3 text-right font-mono">{portfolio ? portfolio.oris.toLocaleString() : '0'}</td>
+                    <td className="py-3 text-right font-mono">${currentPrice.toFixed(2)}</td>
+                    <td className="py-3 text-right font-mono font-medium">${totalValue.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </section>
 

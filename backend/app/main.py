@@ -100,13 +100,22 @@ async def startup():
                 )
                 session.add(bot_portfolio)
 
-            # Asset: $SIM
-            asset_r = await session.execute(
+            # Asset: $ORIS — rename legacy "SIM" row if it still exists
+            legacy_r = await session.execute(
                 select(Asset).where(Asset.symbol == "SIM")
+            )
+            legacy_asset = legacy_r.scalar_one_or_none()
+            if legacy_asset:
+                legacy_asset.symbol = "ORIS"
+                legacy_asset.name = "Synthex ORIS"
+                await session.flush()
+
+            asset_r = await session.execute(
+                select(Asset).where(Asset.symbol == "ORIS")
             )
             asset = asset_r.scalar_one_or_none()
             if not asset:
-                asset = Asset(symbol="SIM", name="Synthex Coin")
+                asset = Asset(symbol="ORIS", name="Synthex ORIS")
                 session.add(asset)
                 await session.flush()
 
@@ -203,6 +212,20 @@ async def ws_trade(websocket: WebSocket):
             ob = await get_orderbook_snapshot(session)
             if ob:
                 await websocket.send_json(ob)
+                
+            # Fetch and send user's current portfolio
+            port_r = await session.execute(
+                select(Portfolio).where(Portfolio.user_id == user_id)
+            )
+            portfolio = port_r.scalar_one_or_none()
+            if portfolio:
+                await websocket.send_json({
+                    "type": "portfolio_update",
+                    "data": {
+                        "fiat_balance": float(portfolio.fiat_balance),
+                        "asset_quantity": float(portfolio.asset_quantity)
+                    }
+                })
 
         # --- Phase 2: Main message loop ---
         while True:
@@ -212,7 +235,7 @@ async def ws_trade(websocket: WebSocket):
             if msg_type == "MARKET_ORDER":
                 data = raw.get("data", {})
                 action = data.get("action", "")
-                symbol = data.get("symbol", "SIM")
+                symbol = data.get("symbol", "ORIS")
                 quantity = data.get("quantity", 0)
 
                 # Basic validation
@@ -352,7 +375,7 @@ async def inject_news(
         "type": "orderbook_update",
         "data": {
             "timestamp": int(time.time() * 1000),
-            "symbol": "SIM",
+            "symbol": "ORIS",
             "best_bid": best_bid,
             "best_ask": best_ask,
             "spread": round(best_ask - best_bid, 6),

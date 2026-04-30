@@ -17,7 +17,7 @@ class JoinData(BaseModel):
 
 class MarketOrderData(BaseModel):
     action: str = Field(..., pattern="^(BUY|SELL)$")
-    symbol: str = Field(default="SIM")
+    symbol: str = Field(default="ORIS")
     quantity: int = Field(..., gt=0, le=500)
 
 

@@ -30,7 +30,7 @@ export default function ClientAppShell({ children }: { children: React.ReactNode
 
   if (!username) {
     return (
-      <div className="h-full w-full bg-zinc-50 flex items-center justify-center">
+      <div className="h-screen w-full bg-zinc-50 flex items-center justify-center">
         <Toaster position="top-right" />
         <div className="w-full max-w-sm p-8 bg-white/70 backdrop-blur-xl shadow-sm border border-zinc-200 rounded-2xl flex flex-col items-center">
           <div className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center shadow-sm mb-6">
@@ -48,14 +48,17 @@ export default function ClientAppShell({ children }: { children: React.ReactNode
               }
             }}
           >
-            <input
-              type="text"
-              placeholder="Trader Handle"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-transparent text-center font-mono font-medium text-zinc-900 placeholder:text-zinc-400 transition-all"
-              autoFocus
-            />
+            <div className="relative w-full flex items-center bg-zinc-50 border border-zinc-200 rounded-xl focus-within:ring-2 focus-within:ring-zinc-900 focus-within:border-transparent transition-all">
+              <span className="pl-4 pr-1 text-zinc-400 font-mono font-medium">@</span>
+              <input
+                type="text"
+                placeholder="Trader Handle"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                className="w-full py-3 pr-4 bg-transparent focus:outline-none text-left font-mono font-medium text-zinc-900 placeholder:text-zinc-400"
+                autoFocus
+              />
+            </div>
             <button
               type="submit"
               disabled={!inputValue.trim()}

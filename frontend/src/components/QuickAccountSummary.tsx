@@ -20,7 +20,7 @@ export default function QuickAccountSummary() {
         <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-100 flex flex-col justify-center shadow-sm">
           <span className="text-xs text-zinc-500 mb-1">Total $ORIS</span>
           <span className="text-xl font-mono font-semibold text-zinc-900 tracking-tight">
-            {portfolio ? portfolio.oris.toLocaleString() : '0'} <span className="text-sm font-sans text-zinc-400 font-medium ml-1">SIM</span>
+            {portfolio ? portfolio.oris.toLocaleString() : '0'} <span className="text-sm font-sans text-zinc-400 font-medium ml-1">ORIS</span>
           </span>
         </div>
       </div>

@@ -181,7 +181,7 @@ async def execute_market_order(
                 "total_cost": float(total_cost),
                 "new_fiat_balance": float(user_portfolio.fiat_balance),
                 "new_asset_quantity": float(user_portfolio.asset_quantity),
-                "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} SIM at {execution_price}",
+                "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} ORIS at {execution_price}",
             }
 
     except OperationalError as e:
@@ -190,7 +190,7 @@ async def execute_market_order(
         raise
 
 
-async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "SIM") -> dict | None:
+async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") -> dict | None:
     """Read current best bid/ask from the CLOB."""
     asset_r = await session.execute(select(Asset).where(Asset.symbol == symbol))
     asset = asset_r.scalar_one_or_none()

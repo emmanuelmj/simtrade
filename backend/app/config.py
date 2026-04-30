@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     VOLATILITY: float = 0.50
     HALF_SPREAD: float = 0.50
     HOUSE_BOT_QUANTITY: int = 500
-    INITIAL_FIAT_BALANCE: float = 10000.00
+    INITIAL_FIAT_BALANCE: float = 100000.00
 
 
 settings = Settings()
