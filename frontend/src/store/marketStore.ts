@@ -57,6 +57,10 @@ interface MarketStore {
   newsAlert: NewsAlert | null;
   portfolio: PortfolioState | null;
   myTrades: Trade[];
+  selectedPrice: number | null;
+  selectedQty: number | null;
+  setPrice: (price: number | null) => void;
+  setOrder: (price: number, qty: number) => void;
 
   setUsername: (username: string | null) => void;
 
@@ -81,6 +85,10 @@ export const useMarketStore = create<MarketStore>()(
       newsAlert: null,
       portfolio: null,
       myTrades: [],
+      selectedPrice: null,
+      selectedQty: null,
+      setPrice: (price) => set({ selectedPrice: price }),
+      setOrder: (price, qty) => set({ selectedPrice: price, selectedQty: qty }),
 
       setUsername: (username) => set({ username }),
 
@@ -99,7 +107,9 @@ export const useMarketStore = create<MarketStore>()(
     leaderboard: null,
     newsAlert: null,
     portfolio: null,
-    myTrades: []
+    myTrades: [],
+    selectedPrice: null,
+    selectedQty: null
   })
     }),
     {

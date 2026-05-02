@@ -119,6 +119,9 @@ class Order(Base):
 class Trade(Base):
     """Immutable execution ledger. Append-only — no UPDATE or DELETE."""
     __tablename__ = "trades"
+    __table_args__ = (
+        Index("ix_trades_lookup", "asset_id", "executed_at"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
