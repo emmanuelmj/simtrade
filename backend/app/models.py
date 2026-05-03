@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
 )
@@ -73,6 +74,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username = Column(String(64), unique=True, nullable=False)
     role = Column(Enum(UserRole, name="user_role", create_constraint=True), nullable=False, default=UserRole.PARTICIPANT)
+    fiat_balance = Column(Numeric(18, 6), nullable=False, default=100000.0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
@@ -134,17 +136,34 @@ class Trade(Base):
     executed_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
-class Portfolio(Base):
-    __tablename__ = "portfolios"
+class Holding(Base):
+    """Settled asset balances."""
+    __tablename__ = "holdings"
     __table_args__ = (
-        CheckConstraint("fiat_balance >= 0", name="ck_portfolios_fiat_nonneg"),
-        CheckConstraint("asset_quantity >= 0", name="ck_portfolios_asset_nonneg"),
+        CheckConstraint("quantity >= 0", name="ck_holdings_quantity_nonneg"),
+        Index("ix_holdings_user_asset", "user_id", "asset_id", unique=True),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
-    fiat_balance = Column(Numeric(18, 6), nullable=False, default=0)
-    asset_quantity = Column(Numeric(18, 6), nullable=False, default=0)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    quantity = Column(Numeric(18, 6), nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class Position(Base):
+    """Active positions tracking average entry price for P&L."""
+    __tablename__ = "positions"
+    __table_args__ = (
+        Index("ix_positions_user_asset", "user_id", "asset_id", unique=True),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    quantity = Column(Numeric(18, 6), nullable=False, default=0)
+    avg_entry_price = Column(Numeric(18, 6), nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
 class NewsEvent(Base):
@@ -158,3 +177,14 @@ class NewsEvent(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class Drawing(Base):
+    """User-saved chart drawings (lines, shapes, text)."""
+    __tablename__ = "drawings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    data = Column(JSON, nullable=False)  # Stores the serialized drawing objects
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)

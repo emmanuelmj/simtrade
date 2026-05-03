@@ -4,7 +4,7 @@ Matches docs/5-API-Design.md contracts exactly.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any, List
 
 
 # ---------------------------------------------------------------------------
@@ -94,3 +94,19 @@ class MarketStateResponse(BaseModel):
 class ResetSessionResponse(BaseModel):
     status: str
     message: str
+
+
+# ---------------------------------------------------------------------------
+# REST: Drawings API
+# ---------------------------------------------------------------------------
+
+class SaveDrawingRequest(BaseModel):
+    username: str
+    symbol: str
+    data: Any
+
+
+class DrawingResponse(BaseModel):
+    symbol: str
+    data: Any
+    updated_at: str

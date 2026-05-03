@@ -20,7 +20,8 @@ from app.models import (
     OrderSide,
     OrderStatus,
     OrderType,
-    Portfolio,
+    Holding,
+    Position,
     Trade,
     User,
     UserRole,
@@ -98,51 +99,83 @@ async def execute_market_order(
             execution_price = matched_order.price
             total_cost = execution_price * qty_dec
 
-            # 3. Lock participant portfolio
-            port_r = await session.execute(
-                select(Portfolio).where(Portfolio.user_id == user_id).with_for_update()
+            # 3. Lock participant data (User, Holding, Position)
+            user_r = await session.execute(
+                select(User).where(User.id == user_id).with_for_update()
             )
-            user_portfolio = port_r.scalar_one_or_none()
-            if not user_portfolio:
-                return _fail("VALIDATION_ERROR", "Portfolio not found.")
+            user = user_r.scalar_one_or_none()
+            if not user:
+                return _fail("VALIDATION_ERROR", "User not found.")
 
-            if action == "BUY" and user_portfolio.fiat_balance < total_cost:
+            holding_r = await session.execute(
+                select(Holding).where(Holding.user_id == user_id, Holding.asset_id == asset.id).with_for_update()
+            )
+            holding = holding_r.scalar_one_or_none()
+            if not holding:
+                holding = Holding(user_id=user_id, asset_id=asset.id, quantity=Decimal("0"))
+                session.add(holding)
+
+            position_r = await session.execute(
+                select(Position).where(Position.user_id == user_id, Position.asset_id == asset.id).with_for_update()
+            )
+            position = position_r.scalar_one_or_none()
+            if not position:
+                position = Position(user_id=user_id, asset_id=asset.id, quantity=Decimal("0"), avg_entry_price=Decimal("0"))
+                session.add(position)
+
+            if action == "BUY" and user.fiat_balance < total_cost:
                 return _fail(
                     "INSUFFICIENT_FUNDS",
-                    f"Insufficient fiat balance. Required: {total_cost}, Available: {user_portfolio.fiat_balance}",
+                    f"Insufficient fiat balance. Required: {total_cost}, Available: {user.fiat_balance}",
                 )
-            if action == "SELL" and user_portfolio.asset_quantity < qty_dec:
+            if action == "SELL" and holding.quantity < qty_dec:
                 return _fail(
                     "INSUFFICIENT_INVENTORY",
-                    f"Insufficient inventory. Required: {quantity}, Available: {user_portfolio.asset_quantity}",
+                    f"Insufficient inventory. Required: {quantity}, Available: {holding.quantity}",
                 )
 
-            # 4. Lock House Bot portfolio
+            # 4. Lock House Bot data
             bot_r = await session.execute(
-                select(User.id).where(User.role == UserRole.HOUSE_BOT).limit(1)
+                select(User).where(User.role == UserRole.HOUSE_BOT).limit(1).with_for_update()
             )
-            house_bot_id = bot_r.scalar_one()
+            house_bot = bot_r.scalar_one()
 
-            hport_r = await session.execute(
-                select(Portfolio).where(Portfolio.user_id == house_bot_id).with_for_update()
+            hholding_r = await session.execute(
+                select(Holding).where(Holding.user_id == house_bot.id, Holding.asset_id == asset.id).with_for_update()
             )
-            house_portfolio = hport_r.scalar_one()
+            house_holding = hholding_r.scalar_one()
 
             # 5. Atomic balance adjustments
             now = datetime.now(timezone.utc)
 
             if action == "BUY":
-                buyer_id, seller_id = user_id, house_bot_id
-                user_portfolio.fiat_balance -= total_cost
-                user_portfolio.asset_quantity += qty_dec
-                house_portfolio.fiat_balance += total_cost
-                house_portfolio.asset_quantity -= qty_dec
+                buyer_id, seller_id = user_id, house_bot.id
+                user.fiat_balance -= total_cost
+                holding.quantity += qty_dec
+                
+                # Update Position avg entry price
+                new_total_qty = position.quantity + qty_dec
+                if new_total_qty > 0:
+                    position.avg_entry_price = (
+                        (position.quantity * position.avg_entry_price) + total_cost
+                    ) / new_total_qty
+                position.quantity += qty_dec
+                
+                house_bot.fiat_balance += total_cost
+                house_holding.quantity -= qty_dec
             else:
-                buyer_id, seller_id = house_bot_id, user_id
-                user_portfolio.asset_quantity -= qty_dec
-                user_portfolio.fiat_balance += total_cost
-                house_portfolio.fiat_balance -= total_cost
-                house_portfolio.asset_quantity += qty_dec
+                buyer_id, seller_id = house_bot.id, user_id
+                user.fiat_balance += total_cost
+                holding.quantity -= qty_dec
+                
+                # Update Position quantity (avg price remains same on SELL usually, or we close part of it)
+                position.quantity -= qty_dec
+                # If quantity hits zero, reset avg price
+                if position.quantity <= 0:
+                    position.avg_entry_price = Decimal("0")
+                
+                house_bot.fiat_balance -= total_cost
+                house_holding.quantity += qty_dec
 
             # 6. Update matched order (deduct quantity; FILL if depleted)
             matched_order.quantity -= qty_dec
@@ -179,8 +212,8 @@ async def execute_market_order(
                 "executed_price": float(execution_price),
                 "quantity": quantity,
                 "total_cost": float(total_cost),
-                "new_fiat_balance": float(user_portfolio.fiat_balance),
-                "new_asset_quantity": float(user_portfolio.asset_quantity),
+                "new_fiat_balance": float(user.fiat_balance),
+                "new_asset_quantity": float(holding.quantity),
                 "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} ORIS at {execution_price}",
             }
 
@@ -245,9 +278,10 @@ async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") ->
 async def get_leaderboard(session: AsyncSession, ltp: float, initial_fiat: float) -> dict:
     """Compute leaderboard sorted by total portfolio value."""
     result = await session.execute(
-        select(User.username, Portfolio.fiat_balance, Portfolio.asset_quantity)
-        .join(Portfolio, Portfolio.user_id == User.id)
+        select(User.username, User.fiat_balance, func.sum(Holding.quantity))
+        .join(Holding, Holding.user_id == User.id, isouter=True)
         .where(User.role == UserRole.PARTICIPANT)
+        .group_by(User.id, User.username, User.fiat_balance)
     )
     rows = result.all()
 

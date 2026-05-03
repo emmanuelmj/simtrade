@@ -67,8 +67,6 @@ export default function ClientAppShell({ children }: { children: React.ReactNode
         <nav className="flex flex-col gap-1 w-full items-center mt-2">
           {[
             { href: '/',            Icon: LineChart,  label: 'Trade'       },
-            { href: '/portfolio',   Icon: Briefcase,  label: 'Portfolio'   },
-            { href: '/leaderboard', Icon: Trophy,     label: 'Leaderboard' },
           ].map(({ href, Icon, label }) => (
             <Link key={href} href={href} title={label}
               className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all ${

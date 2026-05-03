@@ -1,0 +1,343 @@
+INFO:     Started server process [4720]
+INFO:     Waiting for application startup.
+2026-05-03 14:19:25,312 [synthex] INFO: Database tables created.
+2026-05-03 14:19:25,384 [synthex] INFO: Seed data ready.
+2026-05-03 14:19:25,384 [synthex] INFO: Fair Value tick loop launched.
+2026-05-03 14:19:25,384 [synthex.tick] INFO: Tick loop started — 1 Hz cycle
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     ('127.0.0.1', 51555) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+2026-05-03 14:19:47,217 [synthex] INFO: New participant created: tester_bot
+2026-05-03 14:19:47,232 [synthex] INFO: Participant joined: tester_bot (1 total)
+INFO:     ('127.0.0.1', 51571) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:20:19,028 [synthex] INFO: New participant created: Emmanuelmj
+2026-05-03 14:20:19,042 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:20:40,860 [synthex] ERROR: WebSocket error for user 1df6e198-b576-4382-82ca-afb045592b14
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 545, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 176, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 267, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 256, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 206, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "orders" violates check constraint "ck_orders_quantity_positive"
+DETAIL:  Failing row contains (a4841bbc-3440-4c1a-8b50-856d2082ec72, a5031aad-e40d-4d3b-b925-dadc8fadb6c6, 3e89f213-58b7-4010-a450-858d67072787, ASK, LIMIT, 103.026916, 0.000000, FILLED, 2026-05-03 08:50:40.025959+00, 2026-05-03 08:50:40.835829+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1963, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 943, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 580, in execute
+    self._adapt_connection.await_(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 558, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 508, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 792, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "orders" violates check constraint "ck_orders_quantity_positive"
+DETAIL:  Failing row contains (a4841bbc-3440-4c1a-8b50-856d2082ec72, a5031aad-e40d-4d3b-b925-dadc8fadb6c6, 3e89f213-58b7-4010-a450-858d67072787, ASK, LIMIT, 103.026916, 0.000000, FILLED, 2026-05-03 08:50:40.025959+00, 2026-05-03 08:50:40.835829+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/app/main.py", line 307, in ws_trade
+    result = await execute_market_order(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/app/matching_engine.py", line 199, in execute_market_order
+    ms_r = await session.execute(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 463, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2365, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2230, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3065, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3054, in _autoflush
+    self.flush()
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4345, in flush
+    self._flush(objects)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4480, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4441, in _flush
+    flush_context.execute()
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 912, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1415, in execute
+    return meth(
+           ^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 523, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1637, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1842, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1982, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2351, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1963, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 943, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 580, in execute
+    self._adapt_connection.await_(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 558, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 508, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 792, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "orders" violates check constraint "ck_orders_quantity_positive"
+DETAIL:  Failing row contains (a4841bbc-3440-4c1a-8b50-856d2082ec72, a5031aad-e40d-4d3b-b925-dadc8fadb6c6, 3e89f213-58b7-4010-a450-858d67072787, ASK, LIMIT, 103.026916, 0.000000, FILLED, 2026-05-03 08:50:40.025959+00, 2026-05-03 08:50:40.835829+00).
+[SQL: UPDATE orders SET quantity=$1::NUMERIC(18, 6), status=$2::order_status, filled_at=$3::TIMESTAMP WITH TIME ZONE WHERE orders.id = $4::UUID]
+[parameters: (Decimal('0.000000'), 'FILLED', datetime.datetime(2026, 5, 3, 8, 50, 40, 835829, tzinfo=datetime.timezone.utc), UUID('a4841bbc-3440-4c1a-8b50-856d2082ec72'))]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-05-03 14:20:40,917 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51599) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:21:12,564 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:21:36,846 [synthex] ERROR: WebSocket error for user 1df6e198-b576-4382-82ca-afb045592b14
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 545, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 176, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 267, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 256, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 206, in bind_execute
+asyncpg.exceptions.LockNotAvailableError: could not obtain lock on row in relation "orders"
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1963, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 943, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 580, in execute
+    self._adapt_connection.await_(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 558, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 508, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 792, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: <class 'asyncpg.exceptions.LockNotAvailableError'>: could not obtain lock on row in relation "orders"
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/simtrade/backend/app/main.py", line 307, in ws_trade
+    result = await execute_market_order(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/app/matching_engine.py", line 89, in execute_market_order
+    order_r = await session.execute(order_q)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 463, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2365, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2251, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 306, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1415, in execute
+    return meth(
+           ^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 523, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1637, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1842, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1982, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2351, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1963, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 943, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 580, in execute
+    self._adapt_connection.await_(
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 558, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 508, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/Users/apple/Desktop/simtrade/backend/venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 792, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.LockNotAvailableError'>: could not obtain lock on row in relation "orders"
+[SQL: SELECT orders.id, orders.owner_id, orders.asset_id, orders.side, orders.order_type, orders.price, orders.quantity, orders.status, orders.created_at, orders.filled_at 
+FROM orders 
+WHERE orders.asset_id = $1::UUID AND orders.side = $2::order_side AND orders.status = $3::order_status AND orders.order_type = $4::order_type ORDER BY orders.price ASC 
+ LIMIT $5::INTEGER FOR UPDATE NOWAIT]
+[parameters: (UUID('3e89f213-58b7-4010-a450-858d67072787'), 'ASK', 'OPEN', 'LIMIT', 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-05-03 14:21:36,867 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51646) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:23:51,611 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:28:56,216 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51723) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:28:56,600 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:28:58,845 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51727) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:28:59,236 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:29:08,839 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51737) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:29:09,256 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:30:23,265 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+2026-05-03 14:30:23,569 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (0 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51798) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:30:24,458 [synthex] INFO: Participant joined: Emmanuelmj (1 total)
+INFO:     ('127.0.0.1', 51802) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+INFO:     ('127.0.0.1', 51804) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+2026-05-03 14:30:25,058 [synthex] INFO: Participant joined: tester_bot (2 total)
+INFO:     ('127.0.0.1', 51806) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+2026-05-03 14:30:25,263 [synthex] INFO: Participant joined: tester_bot (2 total)
+2026-05-03 14:30:25,318 [synthex] INFO: Participant joined: tester_bot (2 total)
+2026-05-03 14:31:05,981 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51837) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:31:07,358 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:31:21,516 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51869) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:31:22,660 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:31:31,215 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51890) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:31:32,199 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+INFO:     ('127.0.0.1', 51910) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+2026-05-03 14:31:50,037 [synthex] INFO: Participant joined: tester_bot (2 total)
+2026-05-03 14:31:51,678 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (1 total)
+INFO:     connection closed
+2026-05-03 14:31:51,850 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (1 total)
+INFO:     connection closed
+2026-05-03 14:31:52,100 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (1 total)
+INFO:     connection closed
+2026-05-03 14:31:52,261 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51927) - "WebSocket /ws/trade?token=tester_bot" [accepted]
+INFO:     connection open
+2026-05-03 14:32:04,229 [synthex] INFO: Participant joined: tester_bot (2 total)
+2026-05-03 14:33:17,059 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51956) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:33:17,406 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:33:19,057 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51960) - "WebSocket /ws/trade?token=Emmanuelmj" [accepted]
+INFO:     connection open
+2026-05-03 14:33:19,440 [synthex] INFO: Participant joined: Emmanuelmj (2 total)
+2026-05-03 14:33:45,627 [synthex.ws] INFO: Client disconnected: 1df6e198-b576-4382-82ca-afb045592b14 (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51971) - "WebSocket /ws/trade?token=yadav" [accepted]
+INFO:     connection open
+2026-05-03 14:33:53,097 [synthex] INFO: New participant created: yadav
+2026-05-03 14:33:53,110 [synthex] INFO: Participant joined: yadav (2 total)
+2026-05-03 14:34:07,866 [synthex.ws] INFO: Client disconnected: acab07b4-8e1b-4617-924a-da07768f707e (1 total)
+INFO:     connection closed
+INFO:     ('127.0.0.1', 51976) - "WebSocket /ws/trade?token=yadav" [accepted]
+INFO:     connection open
+2026-05-03 14:34:09,104 [synthex] INFO: Participant joined: yadav (2 total)
+2026-05-03 14:35:18,965 [synthex.ws] INFO: Client disconnected: acab07b4-8e1b-4617-924a-da07768f707e (1 total)
+INFO:     connection closed
+2026-05-03 14:35:20,695 [synthex.ws] INFO: Client disconnected: 87f4de60-c0a1-47a7-a4a9-b5c9ad716448 (0 total)
+INFO:     connection closed

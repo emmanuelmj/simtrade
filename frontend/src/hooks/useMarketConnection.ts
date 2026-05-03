@@ -42,11 +42,10 @@ export function useMarketConnection(username: string | null) {
             setNewsAlert(message.data);
             break;
           case 'portfolio_update':
-            updatePortfolio(message.data.fiat_balance, message.data.asset_quantity);
+            updatePortfolio(message.data.fiat_balance, message.data.holdings, message.data.positions);
             break;
           case 'TRADE_RESULT':
             if (message.data.status === 'SUCCESS') {
-              updatePortfolio(message.data.new_fiat_balance, message.data.new_asset_quantity);
               addMyTrade({
                 timestamp: Date.now(),
                 symbol: 'ORIS',

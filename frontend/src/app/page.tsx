@@ -8,9 +8,15 @@ import ExecutionControls from '../components/ExecutionControls';
 import DrawingToolbar    from '../components/DrawingToolbar';
 import UtilityStack      from '../components/UtilityStack';
 
+import DashboardOverview from '../components/DashboardOverview';
+import HoldingsView      from '../components/HoldingsView';
+import PositionsView     from '../components/PositionsView';
+import Leaderboard       from '../components/Leaderboard';
+
 export default function Dashboard() {
   const username         = useMarketStore((s) => s.username);
   const connectionStatus = useMarketStore((s) => s.connectionStatus);
+  const currentView      = useMarketStore((s) => s.currentView);
 
   return (
     /**
@@ -54,40 +60,65 @@ export default function Dashboard() {
       {/* ── Workspace ──────────────────────────────────────────── */}
       {/**
        * Grid layout – columns:
-       *   [tools=40px] [utils=56px] [chart=1fr] [sidebar=300px]
-       * The chart (1fr) expands to fill all remaining horizontal space.
-       * Rows: single row = 100% of remaining height.
+       *   [tools=40px] [utils=56px] [content=1fr] ([sidebar=300px] if Terminal)
        */}
       <div
         className="flex-1 min-h-0 grid p-2 gap-2"
-        style={{ gridTemplateColumns: '40px 56px 1fr 300px', gridTemplateRows: '1fr' }}
+        style={{ 
+          gridTemplateColumns: currentView === 'TERMINAL' ? '40px 56px 1fr 300px' : '40px 56px 1fr', 
+          gridTemplateRows: '1fr' 
+        }}
       >
 
-        {/* Col 1 – Drawing toolbar */}
+        {/* Navigation - Always visible */}
         <DrawingToolbar />
-
-        {/* Col 2 – Utility stack (Dashboard / Transactions / News) */}
         <UtilityStack />
 
-        {/* Col 3 – Main chart */}
-        <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
-          <TradingChart />
-        </div>
+        {/* Dynamic Content */}
+        {currentView === 'TERMINAL' ? (
+          <>
+            {/* Col 3 – Main chart */}
+            <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
+              <TradingChart />
+            </div>
 
-        {/* Col 4 – Right sidebar: Trade block + Order book
-         *  Two rows: trade block = 44%, order book = 56%
-         */}
-        <div
-          className="min-h-0 grid gap-2"
-          style={{ gridTemplateRows: '44% 56%' }}
-        >
-          <div className="min-h-0 overflow-y-auto rounded-xl border border-[#1e293b]/60">
-            <ExecutionControls onSendOrder={sendMarketOrder} />
+            {/* Col 4 – Right sidebar: Trade block + Order book */}
+            <div
+              className="min-h-0 grid gap-2"
+              style={{ gridTemplateRows: '44% 56%' }}
+            >
+              <div className="min-h-0 overflow-y-auto rounded-xl border border-[#1e293b]/60">
+                <ExecutionControls onSendOrder={sendMarketOrder} />
+              </div>
+              <div className="min-h-0 rounded-xl border border-[#1e293b]/60 overflow-hidden">
+                <OrderBookPanel />
+              </div>
+            </div>
+          </>
+        ) : currentView === 'DASHBOARD' ? (
+          <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
+            <DashboardOverview />
           </div>
-          <div className="min-h-0 rounded-xl border border-[#1e293b]/60 overflow-hidden">
-            <OrderBookPanel />
+        ) : currentView === 'HOLDINGS' ? (
+          <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
+            <HoldingsView />
           </div>
-        </div>
+        ) : currentView === 'POSITIONS' ? (
+          <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
+            <PositionsView />
+          </div>
+        ) : currentView === 'LEADERBOARD' ? (
+          <div className="min-h-0 min-w-0 rounded-xl overflow-hidden border border-[#1e293b]/60 bg-[#111114]">
+            <Leaderboard />
+          </div>
+        ) : (
+          <div className="min-h-0 min-w-0 rounded-xl flex items-center justify-center border border-[#1e293b]/60 bg-[#111114]">
+             <div className="text-center">
+                <h2 className="text-2xl font-bold text-slate-700 tracking-[0.4em] uppercase mb-2">{currentView}</h2>
+                <p className="text-[10px] font-bold text-blue-500/50 uppercase tracking-widest">Interface development in progress</p>
+             </div>
+          </div>
+        )}
 
       </div>
     </div>

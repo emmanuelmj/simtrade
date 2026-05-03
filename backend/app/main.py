@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,16 +30,25 @@ from app.models import (
     MarketState,
     NewsEvent,
     NewsSentiment,
+    Drawing,
     Order,
     OrderSide,
     OrderStatus,
     OrderType,
-    Portfolio,
+    Holding,
+    Position,
     Trade,
     User,
     UserRole,
 )
-from app.schemas import InjectNewsRequest, InjectNewsResponse, MarketStateResponse, ResetSessionResponse
+from app.schemas import (
+    InjectNewsRequest, 
+    InjectNewsResponse, 
+    MarketStateResponse, 
+    ResetSessionResponse,
+    SaveDrawingRequest,
+    DrawingResponse
+)
 from app.tick_engine import fair_value_tick_loop, house_bot_requote
 
 # ---------------------------------------------------------------------------
@@ -92,13 +102,19 @@ async def startup():
                 session.add(house_bot)
                 await session.flush()
 
-                # House Bot portfolio (effectively infinite)
-                bot_portfolio = Portfolio(
-                    user_id=house_bot.id,
-                    fiat_balance=Decimal("1000000"),
-                    asset_quantity=Decimal("1000000"),
-                )
-                session.add(bot_portfolio)
+                # House Bot fiat and initial holding
+                house_bot.fiat_balance = Decimal("1000000")
+                
+                # House Bot holding for ORIS
+                asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
+                asset = asset_r.scalar_one_or_none()
+                if asset:
+                    holding = Holding(
+                        user_id=house_bot.id,
+                        asset_id=asset.id,
+                        quantity=Decimal("1000000")
+                    )
+                    session.add(holding)
 
             # Asset: $ORIS — rename legacy "SIM" row if it still exists
             legacy_r = await session.execute(
@@ -135,6 +151,39 @@ async def startup():
     # Start tick loop as background task
     asyncio.create_task(fair_value_tick_loop(async_session, manager))
     logger.info("Fair Value tick loop launched.")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def get_user_portfolio_data(session: AsyncSession, user_id: uuid.UUID) -> dict:
+    user_r = await session.execute(select(User).where(User.id == user_id))
+    user = user_r.scalar_one()
+    
+    holdings_r = await session.execute(
+        select(Asset.symbol, Holding.quantity)
+        .join(Holding, Holding.asset_id == Asset.id)
+        .where(Holding.user_id == user_id)
+    )
+    holdings = {h.symbol: float(h.quantity) for h in holdings_r}
+
+    positions_r = await session.execute(
+        select(Asset.symbol, Position.quantity, Position.avg_entry_price)
+        .join(Position, Position.asset_id == Asset.id)
+        .where(Position.user_id == user_id)
+    )
+    positions = [{
+        "symbol": p.symbol,
+        "quantity": float(p.quantity),
+        "avg_price": float(p.avg_entry_price)
+    } for p in positions_r]
+
+    return {
+        "fiat_balance": float(user.fiat_balance),
+        "holdings": holdings,
+        "positions": positions
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -189,16 +238,21 @@ async def ws_trade(websocket: WebSocket):
                 user = user_r.scalar_one_or_none()
 
                 if not user:
-                    user = User(username=username, role=UserRole.PARTICIPANT)
+                    user = User(
+                        username=username, 
+                        role=UserRole.PARTICIPANT,
+                        fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE))
+                    )
                     session.add(user)
                     await session.flush()
+                    
+                    # Create initial ORIS holding
+                    asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
+                    asset = asset_r.scalar_one_or_none()
+                    if asset:
+                        holding = Holding(user_id=user.id, asset_id=asset.id, quantity=Decimal("0"))
+                        session.add(holding)
 
-                    portfolio = Portfolio(
-                        user_id=user.id,
-                        fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE)),
-                        asset_quantity=Decimal("0"),
-                    )
-                    session.add(portfolio)
                     logger.info(f"New participant created: {username}")
 
                 user_id = user.id
@@ -213,19 +267,12 @@ async def ws_trade(websocket: WebSocket):
             if ob:
                 await websocket.send_json(ob)
                 
-            # Fetch and send user's current portfolio
-            port_r = await session.execute(
-                select(Portfolio).where(Portfolio.user_id == user_id)
-            )
-            portfolio = port_r.scalar_one_or_none()
-            if portfolio:
-                await websocket.send_json({
-                    "type": "portfolio_update",
-                    "data": {
-                        "fiat_balance": float(portfolio.fiat_balance),
-                        "asset_quantity": float(portfolio.asset_quantity)
-                    }
-                })
+            # Fetch and send user's current fiat and holdings
+            port_data = await get_user_portfolio_data(session, user_id)
+            await websocket.send_json({
+                "type": "portfolio_update",
+                "data": port_data
+            })
 
         # --- Phase 2: Main message loop ---
         while True:
@@ -274,8 +321,15 @@ async def ws_trade(websocket: WebSocket):
                 # Send personal TRADE_RESULT ack
                 await websocket.send_json({"type": "TRADE_RESULT", "data": result})
 
-                # On success: broadcast trade + orderbook_update + leaderboard
+                # On success: broadcast trade + orderbook_update + leaderboard + portfolio_update
                 if result and result.get("status") == "SUCCESS":
+                    # Send immediate portfolio update to the user
+                    async with async_session() as session:
+                        port_data = await get_user_portfolio_data(session, user_id)
+                        await websocket.send_json({
+                            "type": "portfolio_update",
+                            "data": port_data
+                        })
                     trade_broadcast = {
                         "type": "trade",
                         "data": {
@@ -447,32 +501,30 @@ async def reset_session(_: None = Depends(verify_admin_key)):
             await session.execute(
                 update(Order).values(status=OrderStatus.CANCELLED)
             )
-            # Reset participant portfolios
+            # Reset participant fiat balances
             await session.execute(
-                update(Portfolio)
-                .where(
-                    Portfolio.user_id.in_(
-                        select(User.id).where(User.role == UserRole.PARTICIPANT)
-                    )
-                )
-                .values(
-                    fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE)),
-                    asset_quantity=Decimal("0"),
-                )
+                update(User)
+                .where(User.role == UserRole.PARTICIPANT)
+                .values(fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE)))
             )
-            # Reset house bot portfolio
+            # Clear holdings and positions
+            await session.execute(delete(Holding))
+            await session.execute(delete(Position))
+
+            # Reset house bot
             await session.execute(
-                update(Portfolio)
-                .where(
-                    Portfolio.user_id.in_(
-                        select(User.id).where(User.role == UserRole.HOUSE_BOT)
-                    )
-                )
-                .values(
-                    fiat_balance=Decimal("1000000"),
-                    asset_quantity=Decimal("1000000"),
-                )
+                update(User)
+                .where(User.role == UserRole.HOUSE_BOT)
+                .values(fiat_balance=Decimal("1000000"))
             )
+            # Re-seed house bot holding
+            asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
+            asset = asset_r.scalar_one_or_none()
+            bot_r = await session.execute(select(User.id).where(User.role == UserRole.HOUSE_BOT))
+            bot_id = bot_r.scalar_one()
+            if asset:
+                bot_holding = Holding(user_id=bot_id, asset_id=asset.id, quantity=Decimal("1000000"))
+                session.add(bot_holding)
             # Reset market state
             await session.execute(
                 update(MarketState).values(
@@ -485,6 +537,8 @@ async def reset_session(_: None = Depends(verify_admin_key)):
             await session.execute(
                 update(NewsEvent).values(is_active=False)
             )
+            # Clear all drawings
+            await session.execute(delete(Drawing))
 
     return ResetSessionResponse(
         status="success",
@@ -495,3 +549,65 @@ async def reset_session(_: None = Depends(verify_admin_key)):
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "synthex", "version": "2.0.0"}
+
+
+# ---------------------------------------------------------------------------
+# Drawings API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/drawings", response_model=Optional[DrawingResponse])
+async def get_drawings(symbol: str, username: str):
+    """Retrieve saved drawings for a user and asset."""
+    async with async_session() as session:
+        user_r = await session.execute(select(User).where(User.username == username))
+        user = user_r.scalar_one_or_none()
+        if not user:
+            return None
+        
+        asset_r = await session.execute(select(Asset).where(Asset.symbol == symbol))
+        asset = asset_r.scalar_one_or_none()
+        if not asset:
+            return None
+
+        draw_r = await session.execute(
+            select(Drawing).where(Drawing.user_id == user.id, Drawing.asset_id == asset.id)
+        )
+        drawing = draw_r.scalar_one_or_none()
+        if not drawing:
+            return None
+            
+        return DrawingResponse(
+            symbol=symbol,
+            data=drawing.data,
+            updated_at=drawing.updated_at.isoformat()
+        )
+
+
+@app.post("/api/drawings")
+async def save_drawings(req: SaveDrawingRequest):
+    """Save or update chart drawings for a user."""
+    async with async_session() as session:
+        async with session.begin():
+            user_r = await session.execute(select(User).where(User.username == req.username))
+            user = user_r.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            asset_r = await session.execute(select(Asset).where(Asset.symbol == req.symbol))
+            asset = asset_r.scalar_one_or_none()
+            if not asset:
+                raise HTTPException(status_code=404, detail="Asset not found")
+
+            draw_r = await session.execute(
+                select(Drawing).where(Drawing.user_id == user.id, Drawing.asset_id == asset.id).with_for_update()
+            )
+            drawing = draw_r.scalar_one_or_none()
+            
+            if drawing:
+                drawing.data = req.data
+                drawing.updated_at = datetime.now(timezone.utc)
+            else:
+                drawing = Drawing(user_id=user.id, asset_id=asset.id, data=req.data)
+                session.add(drawing)
+                
+    return {"status": "success"}

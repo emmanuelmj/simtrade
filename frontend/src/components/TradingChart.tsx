@@ -40,6 +40,7 @@ export default function TradingChart() {
   const [priceChange, setPriceChange]  = useState<number>(0);
   const [istTime, setIstTime]          = useState('');
   const [istDate, setIstDate]          = useState('');
+  const [selectedRange, setSelectedRange] = useState('1H');
 
   // Live IST clock
   useEffect(() => {
@@ -134,6 +135,31 @@ export default function TradingChart() {
       chart.remove();
     };
   }, []);
+
+  const handleRangeChange = (range: string) => {
+    setSelectedRange(range);
+    if (!chartRef.current) return;
+
+    const timeScale = chartRef.current.timeScale();
+    const now = Math.floor(Date.now() / 1000) + IST_OFFSET_S;
+
+    let seconds = 0;
+    switch (range) {
+      case '1H':  seconds = 3600; break;
+      case '4H':  seconds = 4 * 3600; break;
+      case '1D':  seconds = 24 * 3600; break;
+      case '2D':  seconds = 48 * 3600; break;
+      case '1W':  seconds = 7 * 24 * 3600; break;
+      case '1M':  seconds = 30 * 24 * 3600; break;
+      case 'ALL': timeScale.fitContent(); return;
+      default:    seconds = 3600;
+    }
+
+    timeScale.setVisibleRange({
+      from: (now - seconds) as Time,
+      to:   now as Time,
+    });
+  };
 
   /* ── Feed price ticks into candle aggregator ─────────────────────── */
   useEffect(() => {
@@ -241,6 +267,23 @@ export default function TradingChart() {
         <div className="text-[10px] font-bold text-tertiary uppercase">
           {CANDLE_INTERVAL_S}s candles · X-axis in IST (UTC+5:30)
         </div>
+      </div>
+
+      {/* Range Selector */}
+      <div className="absolute bottom-4 right-6 z-20 flex items-center gap-1 bg-[#16161a]/90 backdrop-blur-xl p-1 rounded-lg border border-[#1e293b]/50 shadow-2xl shadow-black/50">
+        {['1H', '4H', '1D', '2D', '1W', '1M', 'ALL'].map((range) => (
+          <button
+            key={range}
+            onClick={() => handleRangeChange(range)}
+            className={`px-3 py-1.5 rounded-md text-[10px] font-bold tracking-wider transition-all duration-300 ${
+              selectedRange === range
+                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.2)]'
+                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40 border border-transparent'
+            }`}
+          >
+            {range}
+          </button>
+        ))}
       </div>
     </div>
   );

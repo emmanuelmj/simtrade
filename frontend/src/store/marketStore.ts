@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type View = 'DASHBOARD' | 'TERMINAL' | 'HOLDINGS' | 'POSITIONS' | 'NEWS' | 'LEADERBOARD';
 
 export interface OrderBookState {
   timestamp: number;
@@ -43,9 +44,16 @@ export interface NewsAlert {
   duration_seconds: number;
 }
 
+export interface Position {
+  symbol: string;
+  quantity: number;
+  avg_price: number;
+}
+
 export interface PortfolioState {
   fiat: number;
-  oris: number;
+  holdings: Record<string, number>;
+  positions: Position[];
 }
 
 interface MarketStore {
@@ -59,8 +67,10 @@ interface MarketStore {
   myTrades: Trade[];
   selectedPrice: number | null;
   selectedQty: number | null;
+  currentView: View;
   setPrice: (price: number | null) => void;
   setOrder: (price: number, qty: number) => void;
+  setCurrentView: (view: View) => void;
 
   setUsername: (username: string | null) => void;
 
@@ -69,7 +79,7 @@ interface MarketStore {
   addTrade: (trade: Trade) => void;
   updateLeaderboard: (data: LeaderboardState) => void;
   setNewsAlert: (alert: NewsAlert | null) => void;
-  updatePortfolio: (fiat: number, oris: number) => void;
+  updatePortfolio: (fiat: number, holdings: Record<string, number>, positions: Position[]) => void;
   addMyTrade: (trade: Trade) => void;
   reset: () => void;
 }
@@ -87,8 +97,10 @@ export const useMarketStore = create<MarketStore>()(
       myTrades: [],
       selectedPrice: null,
       selectedQty: null,
+      currentView: 'TERMINAL',
       setPrice: (price) => set({ selectedPrice: price }),
       setOrder: (price, qty) => set({ selectedPrice: price, selectedQty: qty }),
+      setCurrentView: (view) => set({ currentView: view }),
 
       setUsername: (username) => set({ username }),
 
@@ -97,7 +109,7 @@ export const useMarketStore = create<MarketStore>()(
   addTrade: (trade) => set((state) => ({ trades: [...state.trades, trade].slice(-100) })), // Keep last 100
   updateLeaderboard: (data) => set({ leaderboard: data }),
   setNewsAlert: (alert) => set({ newsAlert: alert }),
-  updatePortfolio: (fiat, oris) => set({ portfolio: { fiat, oris } }),
+  updatePortfolio: (fiat, holdings, positions) => set({ portfolio: { fiat, holdings, positions } }),
   addMyTrade: (trade) => set((state) => ({ myTrades: [trade, ...state.myTrades].slice(0, 5) })), // Keep latest 5 trades at the top
   reset: () => set({
     username: null,
