@@ -7,7 +7,7 @@ export default function PositionsView() {
   const portfolio = useMarketStore((s) => s.portfolio);
   const orderbook = useMarketStore((s) => s.orderbook);
   
-  const currentPrice = orderbook?.best_bid ?? 0;
+  const currentPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
   
   const positions = (portfolio?.positions ?? []).map(p => {
     const unrealizedPnl = (currentPrice - p.avg_price) * p.quantity;

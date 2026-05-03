@@ -5,9 +5,9 @@ import { useMarketStore, View } from '../store/marketStore';
 
 const BLOCKS: { Icon: any, label: string, view: View }[] = [
   { Icon: LayoutDashboard,    label: 'Dashboard',   view: 'DASHBOARD' },
+  { Icon: Monitor,            label: 'Terminal',    view: 'TERMINAL' },
   { Icon: Briefcase,          label: 'Holdings',    view: 'HOLDINGS' },
   { Icon: TrendingUp,         label: 'Positions',   view: 'POSITIONS' },
-  { Icon: Monitor,            label: 'Terminal',    view: 'TERMINAL' },
   { Icon: Trophy,             label: 'Leaderboard', view: 'LEADERBOARD' },
   { Icon: MessageSquareQuote, label: 'News',        view: 'NEWS' },
 ];

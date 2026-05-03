@@ -143,7 +143,10 @@ async def execute_market_order(
             hholding_r = await session.execute(
                 select(Holding).where(Holding.user_id == house_bot.id, Holding.asset_id == asset.id).with_for_update()
             )
-            house_holding = hholding_r.scalar_one()
+            house_holding = hholding_r.scalar_one_or_none()
+            if not house_holding:
+                house_holding = Holding(user_id=house_bot.id, asset_id=asset.id, quantity=Decimal("1000000"))
+                session.add(house_holding)
 
             # 5. Atomic balance adjustments
             now = datetime.now(timezone.utc)

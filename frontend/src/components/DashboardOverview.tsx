@@ -19,10 +19,16 @@ export default function DashboardOverview() {
   const leaderboard = useMarketStore((s) => s.leaderboard);
   const username = useMarketStore((s) => s.username);
 
-  // Find my P&L from leaderboard if available
-  const myEntry = leaderboard?.rankings.find(r => r.username === username);
-  const pnl = myEntry?.pnl ?? 0;
-  const pnlPct = myEntry?.pnl_pct ?? 0;
+  // Calculate live P&L based on current mid-price
+  const midPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
+  const fiat = portfolio?.fiat ?? 0;
+  const orisQty = portfolio?.holdings['ORIS'] ?? 0;
+  const totalValue = fiat + (orisQty * midPrice);
+  const initialFiat = 100000;
+  
+  // Only calculate P&L if we have a valid price, otherwise default to 0 or last known
+  const pnl = midPrice > 0 ? totalValue - initialFiat : 0;
+  const pnlPct = midPrice > 0 && initialFiat > 0 ? (pnl / initialFiat) * 100 : 0;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 bg-[#0a0a0c]">

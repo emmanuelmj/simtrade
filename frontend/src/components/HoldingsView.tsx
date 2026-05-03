@@ -7,7 +7,7 @@ export default function HoldingsView() {
   const portfolio = useMarketStore((s) => s.portfolio);
   const orderbook = useMarketStore((s) => s.orderbook);
   
-  const currentPrice = orderbook?.best_bid ?? 0;
+  const currentPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
   
   // For MVP, we only have ORIS. In future, we loop through holdings.
   const holdings = Object.entries(portfolio?.holdings ?? {}).map(([symbol, qty]) => {

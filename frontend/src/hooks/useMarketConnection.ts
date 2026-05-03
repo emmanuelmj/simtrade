@@ -12,72 +12,81 @@ export function useMarketConnection(username: string | null) {
   useEffect(() => {
     if (!username) return;
 
-    setConnectionStatus('connecting');
+    let reconnectTimer: NodeJS.Timeout;
+    let ws: WebSocket | null = null;
 
-    // Connecting with the username as token for MVP auth
-    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(username)}`);
-    globalWs = ws;
+    const connect = () => {
+      setConnectionStatus('connecting');
+      ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(username)}`);
+      globalWs = ws;
 
-    ws.onopen = () => {
-      setConnectionStatus('connected');
-      // Send the mandatory JOIN message
-      ws.send(JSON.stringify({ type: 'JOIN', username }));
-    };
+      ws.onopen = () => {
+        setConnectionStatus('connected');
+        ws?.send(JSON.stringify({ type: 'JOIN', username }));
+      };
 
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        
-        switch (message.type) {
-          case 'orderbook_update':
-            updateOrderbook(message.data);
-            break;
-          case 'trade':
-            addTrade(message.data);
-            break;
-          case 'leaderboard_update':
-            updateLeaderboard(message.data);
-            break;
-          case 'news_alert':
-            setNewsAlert(message.data);
-            break;
-          case 'portfolio_update':
-            updatePortfolio(message.data.fiat_balance, message.data.holdings, message.data.positions);
-            break;
-          case 'TRADE_RESULT':
-            if (message.data.status === 'SUCCESS') {
-              addMyTrade({
-                timestamp: Date.now(),
-                symbol: 'ORIS',
-                price: message.data.executed_price,
-                quantity: message.data.quantity,
-                side: message.data.action,
-                trade_id: message.data.trade_id,
-              });
-              toast.success(`Executed: ${message.data.action} ${message.data.quantity} ORIS at $${message.data.executed_price.toFixed(2)}`);
-            } else {
-              toast.error(`Trade Failed: ${message.data.message || 'Unknown error'}`);
-            }
-            break;
-          default:
-            console.log('Unhandled message type:', message.type);
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          
+          switch (message.type) {
+            case 'orderbook_update':
+              updateOrderbook(message.data);
+              break;
+            case 'trade':
+              addTrade(message.data);
+              break;
+            case 'leaderboard_update':
+              updateLeaderboard(message.data);
+              break;
+            case 'news_alert':
+              setNewsAlert(message.data);
+              break;
+            case 'portfolio_update':
+              updatePortfolio(message.data.fiat_balance, message.data.holdings, message.data.positions);
+              break;
+            case 'TRADE_RESULT':
+              if (message.data.status === 'SUCCESS') {
+                addMyTrade({
+                  timestamp: Date.now(),
+                  symbol: 'ORIS',
+                  price: message.data.executed_price,
+                  quantity: message.data.quantity,
+                  side: message.data.action,
+                  trade_id: message.data.trade_id,
+                });
+                toast.success(`Executed: ${message.data.action} ${message.data.quantity} ORIS at $${message.data.executed_price.toFixed(2)}`);
+              } else {
+                toast.error(`Trade Failed: ${message.data.message || 'Unknown error'}`);
+              }
+              break;
+            default:
+              console.log('Unhandled message type:', message.type);
+          }
+        } catch (e) {
+          console.error('Failed to parse WS message', e);
         }
-      } catch (e) {
-        console.error('Failed to parse WS message', e);
-      }
+      };
+
+      ws.onclose = () => {
+        setConnectionStatus('disconnected');
+        // Simple reconnection logic: try again in 3 seconds
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
     };
 
-    ws.onclose = () => {
-      setConnectionStatus('disconnected');
-    };
-
-    ws.onerror = () => {
-      // Suppress empty error logs from ghost connections or generic issues
-      ws.close();
-    };
+    connect();
 
     return () => {
-      ws.close();
+      if (ws) {
+        ws.onclose = null; // Prevent reconnection on unmount
+        ws.close();
+      }
+      clearTimeout(reconnectTimer);
       if (globalWs === ws) {
         globalWs = null;
       }
