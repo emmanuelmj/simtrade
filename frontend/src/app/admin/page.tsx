@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const ADMIN_KEY = 'supersecretadmin'; // Default from config
+const ADMIN_KEY = 'synthex-god-mode-key-2024'; // Matches backend config
 
 export default function AdminRemote() {
   const [marketState, setMarketState] = useState<any>(null);

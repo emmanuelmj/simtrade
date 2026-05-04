@@ -24,10 +24,11 @@ class Settings(BaseSettings):
 
     # Market parameters
     INITIAL_FAIR_VALUE: float = 100.00
-    VOLATILITY: float = 0.50
-    HALF_SPREAD: float = 0.50
+    VOLATILITY: float = 0.005  # 0.5% per second
+    HALF_SPREAD: float = 0.002 # 0.2% half-spread
     HOUSE_BOT_QUANTITY: int = 500
     INITIAL_FIAT_BALANCE: float = 100000.00
+    N8N_WEBHOOK_URL: str = ""
 
 
 settings = Settings()

@@ -5,21 +5,21 @@ import { Briefcase, TrendingUp, ArrowRightLeft } from 'lucide-react';
 
 export default function HoldingsView() {
   const portfolio = useMarketStore((s) => s.portfolio);
-  const orderbook = useMarketStore((s) => s.orderbook);
+  const marketPrices = useMarketStore((s) => s.marketPrices);
   
-  const currentPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
-  
-  // For MVP, we only have ORIS. In future, we loop through holdings.
-  const holdings = Object.entries(portfolio?.holdings ?? {}).map(([symbol, qty]) => {
-    // Mock prices for other assets if they exist, but for now just ORIS
-    const price = symbol === 'ORIS' ? currentPrice : 0;
-    return {
-      symbol,
-      quantity: qty,
-      price: price,
-      totalValue: qty * price
-    };
-  });
+  // Build holdings from positions with live prices
+  const holdings = (portfolio?.positions ?? [])
+    .filter(pos => pos.quantity > 0)
+    .map(pos => {
+      const d = marketPrices[pos.symbol];
+      const price = d ? (d.best_bid + d.best_ask) / 2 : 0;
+      return {
+        symbol: pos.symbol,
+        quantity: pos.quantity,
+        price,
+        totalValue: pos.quantity * price,
+      };
+    });
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 bg-[#0a0a0c]">

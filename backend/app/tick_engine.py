@@ -26,6 +26,7 @@ from .models import (
     NewsEvent,
     Order,
     OrderSide,
+    OrderStatus,
     Participant,
     User,
     UserRole,
@@ -44,15 +45,34 @@ def _calculate_fair_value(
     volatility: float,
     news_magnitude: float | None = None,
 ) -> Decimal:
-    """GBM-like micro-step.  If a news event is active its magnitude shifts
-    the drift accordingly (positive = bullish, negative = bearish)."""
-    drift = 0.0
+    """Mean-reverting random walk for stable price discovery."""
+    curr = float(current_fv)
+    
+    # Parameters for stability
+    theta = 0.05  # Speed of mean reversion
+    # Target is roughly the initial price (hardcoded or we can fetch, but 100-500 is common)
+    # If the price is too high or low, it tends to pull back towards 'reason'
+    target = 150.0 
+    if curr > 1000: target = 800.0
+    if curr < 10:   target = 20.0
+
+    reversion = theta * (target - curr) * 0.01
+    
+    drift = reversion
     if news_magnitude is not None:
-        drift = float(news_magnitude) * 0.002
-    sigma = volatility
+        drift += float(news_magnitude) * 0.005
+    
+    sigma = volatility * 0.1 # Dampen the volatility constant
     epsilon = random.gauss(0, 1)
-    factor = exp(drift + sigma * epsilon)
-    return Decimal(str(round(float(current_fv) * factor, 6)))
+    
+    # Delta price
+    delta = drift + (sigma * curr * epsilon * 0.001)
+    new_price = curr + delta
+    
+    # Floor price to prevent negative or zero
+    new_price = max(new_price, 0.0001)
+    
+    return Decimal(str(round(new_price, 6)))
 
 
 # ---------------------------------------------------------------------------
@@ -70,15 +90,25 @@ async def house_bot_requote(
 ):
     """Cancel the bot's existing orders for this asset and place fresh bid/ask."""
     await session.execute(
-        delete(Order).where(
+        update(Order)
+        .where(
             Order.participant_id == participant_id,
             Order.competition_id == competition_id,
             Order.asset_id == asset_id,
+            Order.status == OrderStatus.OPEN,
         )
+        .values(status=OrderStatus.CANCELLED)
     )
 
-    bid_price = fair_value - half_spread * fair_value
-    ask_price = fair_value + half_spread * fair_value
+    raw_bid = fair_value - half_spread * fair_value
+    raw_ask = fair_value + half_spread * fair_value
+    
+    bid_price = max(Decimal("0.01"), round(raw_bid, 2))
+    ask_price = max(Decimal("0.01"), round(raw_ask, 2))
+    
+    # In extreme cases, if they equal due to rounding floor
+    if bid_price == ask_price:
+        ask_price = bid_price + Decimal("0.01")
 
     bid_order = Order(
         participant_id=participant_id,

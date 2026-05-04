@@ -141,7 +141,7 @@ class Order(Base):
     """Central Limit Order Book (CLOB) — scoped to competition_id."""
     __tablename__ = "orders"
     __table_args__ = (
-        CheckConstraint("quantity > 0", name="ck_orders_quantity_positive"),
+        CheckConstraint("quantity >= 0", name="ck_orders_quantity_positive"),
         CheckConstraint("price IS NULL OR price > 0", name="ck_orders_price_positive"),
         Index("ix_orders_book_lookup", "competition_id", "asset_id", "side", "status", "price"),
     )

@@ -1,17 +1,17 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams } from 'next/navigation';
 import { useMarketStore } from '../store/marketStore';
 import { sendMarketOrder } from '../hooks/useMarketConnection';
 import { toast } from 'sonner';
 
 const PRESETS = [10, 50, 100, 500];
 const fmt2 = (n: number) =>
-  n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function ExecutionControls() {
   const [qty, setQty] = useState(10);
-
   const connectionStatus = useMarketStore((s) => s.connectionStatus);
   const portfolio        = useMarketStore((s) => s.portfolio);
   const selectedSymbol   = useMarketStore((s) => s.selectedSymbol);
@@ -19,15 +19,31 @@ export default function ExecutionControls() {
   const data             = marketPrices[selectedSymbol];
 
   const isConnected = connectionStatus === 'connected';
-  const mid = data ? (data.best_bid + data.best_ask) / 2 : 0;
-  const totalAmount = mid * qty;
+  
+  // Memoize mid-price to prevent jitter in derived values
+  const mid = useMemo(() => 
+    data ? (data.best_bid + data.best_ask) / 2 : 0
+  , [data]);
+
+  // Memoize totalAmount to prevent re-calculating on every render
+  const totalAmount = useMemo(() => mid * qty, [mid, qty]);
 
   // Current holding for selected symbol
-  const currentHolding = portfolio?.positions?.find((p) => p.symbol === selectedSymbol)?.quantity ?? 0;
-  const canBuy  = isConnected && qty > 0 && qty <= 100_000 && (!portfolio || portfolio.fiat >= totalAmount);
-  const canSell = isConnected && qty > 0 && qty <= 100_000 && currentHolding >= qty;
+  const currentHolding = useMemo(() => 
+    portfolio?.positions?.find((p) => p.symbol === selectedSymbol)?.quantity ?? 0
+  , [portfolio?.positions, selectedSymbol]);
+
+  const canBuy = useMemo(() => 
+    isConnected && qty > 0 && qty <= 100_000 && (!portfolio || portfolio.fiat >= totalAmount)
+  , [isConnected, qty, portfolio, totalAmount]);
+
+  const canSell = useMemo(() => 
+    isConnected && qty > 0 && qty <= 100_000 && currentHolding >= qty
+  , [isConnected, qty, currentHolding]);
 
   const handleOrder = (action: 'BUY' | 'SELL') => {
+    // Basic validation before sending
+    if (qty <= 0) return;
     sendMarketOrder(action, selectedSymbol, qty);
   };
 

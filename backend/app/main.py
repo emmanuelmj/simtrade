@@ -106,27 +106,45 @@ async def startup():
                 session.add(house_bot)
                 await session.flush()
 
-            # Seed Global Sandbox competition
-            comp_r = await session.execute(
-                select(Competition).where(Competition.name == "Global Sandbox")
-            )
-            global_comp = comp_r.scalar_one_or_none()
-            if not global_comp:
-                global_comp = Competition(
-                    name="Global Sandbox",
-                    type=CompetitionType.PUBLIC,
-                    status=CompetitionStatus.ACTIVE,
-                    starting_balance=Decimal("100000.00")
+            # Seed Competitions
+            comps_to_seed = [
+                ("Global Sandbox", "2323", 100000),
+                ("Daily Scalp Challenge", "SCALPER", 50000),
+                ("Weekly Swing Marathon", "SWINGER", 250000),
+                ("High Volatility Options Arena", "VOLA", 100000),
+            ]
+            for cname, ccode, cbal in comps_to_seed:
+                comp_r = await session.execute(
+                    select(Competition).where(Competition.name == cname)
                 )
-                session.add(global_comp)
-                await session.flush()
+                comp = comp_r.scalar_one_or_none()
+                if not comp:
+                    comp = Competition(
+                        name=cname,
+                        type=CompetitionType.PUBLIC,
+                        status=CompetitionStatus.ACTIVE,
+                        room_code=ccode,
+                        starting_balance=Decimal(str(cbal))
+                    )
+                    session.add(comp)
+                else:
+                    comp.room_code = ccode
+            await session.flush()
 
-            # Seed 4 Assets
+            # Seed Assets (Tech, Crypto, Forex)
             assets_to_seed = [
                 ("SYNX", "Synthex SYNX", Decimal("150.00")),
                 ("NEXO", "Synthex NEXO", Decimal("45.50")),
                 ("VRTX", "Synthex VRTX", Decimal("210.25")),
                 ("AEGS", "Synthex AEGS", Decimal("85.00")),
+                ("BTC", "Bitcoin", Decimal("64250.00")),
+                ("ETH", "Ethereum", Decimal("3450.00")),
+                ("SOL", "Solana", Decimal("145.00")),
+                ("AAPL", "Apple Inc.", Decimal("185.00")),
+                ("TSLA", "Tesla Inc.", Decimal("175.00")),
+                ("NVDA", "NVIDIA Corp.", Decimal("880.00")),
+                ("EURUSD", "EUR/USD", Decimal("1.0850")),
+                ("GBPUSD", "GBP/USD", Decimal("1.2650")),
             ]
 
             for symbol, name, base_price in assets_to_seed:
@@ -207,19 +225,27 @@ async def verify_admin_key(x_admin_key: str = Header(None)):
 # WebSocket Endpoint — /ws/trade/{competition_id}
 # ---------------------------------------------------------------------------
 
-@app.websocket("/ws/trade/{competition_id}")
-async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
+@app.websocket("/ws/trade/{comp_id_or_code}")
+async def ws_trade(websocket: WebSocket, comp_id_or_code: str):
     # Accept the raw connection first, then wait for JOIN
     await websocket.accept()
     participant_id: uuid.UUID | None = None
+    competition_id: uuid.UUID | None = None
 
     try:
-        # Check if competition exists and is active
+        # --- Competition Resolution ---
+        try:
+            # Try parsing as UUID
+            target_id = uuid.UUID(comp_id_or_code)
+            filter_stmt = (Competition.id == target_id)
+        except ValueError:
+            # Fallback to room code
+            filter_stmt = (Competition.room_code == comp_id_or_code)
+
         async with async_session() as session:
-            comp_r = await session.execute(
-                select(Competition).where(Competition.id == competition_id)
-            )
+            comp_r = await session.execute(select(Competition).where(filter_stmt))
             comp = comp_r.scalar_one_or_none()
+            
             if not comp or comp.status != CompetitionStatus.ACTIVE:
                 await websocket.send_json({
                     "type": "ERROR",
@@ -227,6 +253,8 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                 })
                 await websocket.close()
                 return
+            
+            competition_id = comp.id # Canonical UUID
 
         # --- Phase 1: Wait for JOIN message ---
         raw = await websocket.receive_json()
@@ -292,19 +320,18 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
 
                 participant_id = participant.id
 
-        # Register with manager (we already accepted above, so we just manually add to rooms)
+        # Register with manager
         if competition_id not in manager._rooms:
             manager._rooms[competition_id] = {}
         manager._rooms[competition_id][participant_id] = websocket
         logger.info(f"Participant joined room {competition_id}: {username} ({manager.active_count_in_room(competition_id)} total in room)")
 
-        # Send current orderbook snapshot as welcome
+        # Send initial data
         async with async_session() as session:
             ob = await get_orderbook_snapshot(session, competition_id)
             if ob:
                 await websocket.send_json(ob)
                 
-            # Fetch and send user's current fiat and holdings
             port_data = await get_user_portfolio_data(session, participant_id)
             await websocket.send_json({
                 "type": "portfolio_update",
@@ -322,7 +349,6 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                 symbol = data.get("symbol", "SYNX")
                 quantity = data.get("quantity", 0)
 
-                # Basic validation
                 if action not in ("BUY", "SELL"):
                     await websocket.send_json({
                         "type": "TRADE_RESULT",
@@ -336,7 +362,6 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                     })
                     continue
 
-                # Execute with retry on lock contention
                 result = None
                 for attempt in range(2):
                     try:
@@ -347,7 +372,7 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                         break
                     except LockContentionError:
                         if attempt == 0:
-                            await asyncio.sleep(0.05)  # 50ms retry per TRD
+                            await asyncio.sleep(0.05)
                         else:
                             result = {
                                 "status": "FAILED",
@@ -355,18 +380,16 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                                 "message": "Order locked by concurrent operation. Retry.",
                             }
 
-                # Send personal TRADE_RESULT ack
                 await websocket.send_json({"type": "TRADE_RESULT", "data": result})
 
-                # On success: broadcast trade + orderbook_update + leaderboard + portfolio_update
                 if result and result.get("status") == "SUCCESS":
-                    # Send immediate portfolio update to the user
                     async with async_session() as session:
                         port_data = await get_user_portfolio_data(session, participant_id)
                         await websocket.send_json({
                             "type": "portfolio_update",
                             "data": port_data
                         })
+                    
                     trade_broadcast = {
                         "type": "trade",
                         "data": {
@@ -380,24 +403,36 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                     }
                     await manager.broadcast_to_room(competition_id, trade_broadcast)
 
-                    # Broadcast updated orderbook to room
                     async with async_session() as session:
                         ob = await get_orderbook_snapshot(session, competition_id)
                         if ob:
                             await manager.broadcast_to_room(competition_id, ob)
 
-                        # Broadcast leaderboard to room
                         lb = await get_leaderboard(
-                            session, competition_id, result["executed_price"], comp.starting_balance,
+                            session, competition_id, float(comp.starting_balance)
                         )
                         await manager.broadcast_to_room(competition_id, lb)
+
+                    # Fire off webhook in the background if configured
+                    if settings.N8N_WEBHOOK_URL:
+                        import httpx
+                        import asyncio
+                        
+                        async def send_webhook(data):
+                            try:
+                                async with httpx.AsyncClient(timeout=5.0) as client:
+                                    await client.post(settings.N8N_WEBHOOK_URL, json=data)
+                            except Exception as e:
+                                logger.error(f"Failed to send webhook to n8n: {e}")
+                                
+                        asyncio.create_task(send_webhook(result))
 
     except WebSocketDisconnect:
         pass
     except Exception:
         logger.exception(f"WebSocket error for participant {participant_id}")
     finally:
-        if participant_id:
+        if participant_id and competition_id:
             manager.disconnect(competition_id, participant_id)
 
 
@@ -425,6 +460,66 @@ async def get_active_competitions():
                 "created_at": c.created_at.isoformat()
             } for c in comps
         ]
+
+@app.get("/api/insights/{competition_id}/{username}")
+async def get_trade_insights(competition_id: uuid.UUID, username: str):
+    """Gamified AI Trade Insights based on real trading history."""
+    async with async_session() as session:
+        user_r = await session.execute(select(User).where(User.username == username))
+        user = user_r.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        part_r = await session.execute(
+            select(Participant).where(Participant.user_id == user.id, Participant.competition_id == competition_id)
+        )
+        participant = part_r.scalar_one_or_none()
+        if not participant:
+            return {"insight": "Start trading to receive AI insights!"}
+
+        # Calculate PnL per asset by scanning trades
+        trades_r = await session.execute(
+            select(Trade, Asset.symbol)
+            .join(Asset, Asset.id == Trade.asset_id)
+            .where(
+                (Trade.buyer_id == participant.id) | (Trade.seller_id == participant.id),
+                Trade.competition_id == competition_id
+            )
+        )
+        trades_data = trades_r.all()
+        
+        if not trades_data:
+            return {"insight": "You haven't made any trades yet. The market is waiting!"}
+            
+        # Simplistic PnL calc: Sell Value - Buy Value (unrealized not counted for simplicity here)
+        asset_pnl = {}
+        for trade, symbol in trades_data:
+            if symbol not in asset_pnl:
+                asset_pnl[symbol] = 0.0
+            
+            if trade.buyer_id == participant.id:
+                asset_pnl[symbol] -= float(trade.total_value)
+            elif trade.seller_id == participant.id:
+                asset_pnl[symbol] += float(trade.total_value)
+                
+        if not asset_pnl:
+            return {"insight": "AI is analyzing your strategy..."}
+            
+        best_asset = max(asset_pnl, key=asset_pnl.get)
+        worst_asset = min(asset_pnl, key=asset_pnl.get)
+        
+        best_pnl = asset_pnl[best_asset]
+        worst_pnl = asset_pnl[worst_asset]
+        
+        if best_pnl <= 0 and worst_pnl <= 0:
+            insight = f"It's been a tough market. You're losing the most on ${worst_asset}. Consider adjusting your strategy or setting strict stop-losses."
+        elif best_pnl > 0 and worst_pnl < 0:
+            insight = f"You are highly profitable with ${best_asset} (+${best_pnl:,.0f}), but losing money on ${worst_asset} (${worst_pnl:,.0f}). Consider focusing on your strengths!"
+        else:
+            insight = f"Excellent performance! You're in the green across the board, led by ${best_asset}. You are trading like a true whale."
+            
+        return {"insight": insight}
+
 
 
 # ---------------------------------------------------------------------------

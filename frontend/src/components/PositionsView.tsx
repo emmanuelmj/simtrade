@@ -5,21 +5,23 @@ import { TrendingUp, ArrowUpRight, ArrowDownRight, LayoutPanelTop } from 'lucide
 
 export default function PositionsView() {
   const portfolio = useMarketStore((s) => s.portfolio);
-  const orderbook = useMarketStore((s) => s.orderbook);
+  const marketPrices = useMarketStore((s) => s.marketPrices);
   
-  const currentPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
-  
-  const positions = (portfolio?.positions ?? []).map(p => {
-    const unrealizedPnl = (currentPrice - p.avg_price) * p.quantity;
-    const pnlPct = p.avg_price > 0 ? ((currentPrice - p.avg_price) / p.avg_price) * 100 : 0;
+  const positions = (portfolio?.positions ?? [])
+    .filter(p => p.quantity > 0)
+    .map(p => {
+      const d = marketPrices[p.symbol];
+      const currentPrice = d ? (d.best_bid + d.best_ask) / 2 : 0;
+      const unrealizedPnl = (currentPrice - p.avg_price) * p.quantity;
+      const pnlPct = p.avg_price > 0 ? ((currentPrice - p.avg_price) / p.avg_price) * 100 : 0;
     
-    return {
-      ...p,
-      currentPrice,
-      unrealizedPnl,
-      pnlPct
-    };
-  });
+      return {
+        ...p,
+        currentPrice,
+        unrealizedPnl,
+        pnlPct
+      };
+    });
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 bg-[#0a0a0c]">

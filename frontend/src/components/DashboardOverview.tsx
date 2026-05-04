@@ -15,20 +15,29 @@ import {
 export default function DashboardOverview() {
   const portfolio = useMarketStore((s) => s.portfolio);
   const myTrades = useMarketStore((s) => s.myTrades);
-  const orderbook = useMarketStore((s) => s.orderbook);
+  const marketPrices = useMarketStore((s) => s.marketPrices);
   const leaderboard = useMarketStore((s) => s.leaderboard);
   const username = useMarketStore((s) => s.username);
+  const selectedSymbol = useMarketStore((s) => s.selectedSymbol);
 
-  // Calculate live P&L based on current mid-price
-  const midPrice = orderbook ? (orderbook.best_bid + orderbook.best_ask) / 2 : 0;
+  // Calculate live P&L based on current mid-prices across all holdings
+  const selectedData = marketPrices[selectedSymbol];
+  const midPrice = selectedData ? (selectedData.best_bid + selectedData.best_ask) / 2 : 0;
   const fiat = portfolio?.fiat ?? 0;
-  const orisQty = portfolio?.holdings['ORIS'] ?? 0;
-  const totalValue = fiat + (orisQty * midPrice);
+  
+  const holdingsValue = portfolio?.positions
+    ? portfolio.positions.reduce((acc, pos) => {
+        const d = marketPrices[pos.symbol];
+        const ltp = d ? (d.best_bid + d.best_ask) / 2 : 0;
+        return acc + pos.quantity * ltp;
+      }, 0)
+    : 0;
+  const totalValue = fiat + holdingsValue;
   const initialFiat = 100000;
   
   // Only calculate P&L if we have a valid price, otherwise default to 0 or last known
-  const pnl = midPrice > 0 ? totalValue - initialFiat : 0;
-  const pnlPct = midPrice > 0 && initialFiat > 0 ? (pnl / initialFiat) * 100 : 0;
+  const pnl = totalValue - initialFiat;
+  const pnlPct = initialFiat > 0 ? (pnl / initialFiat) * 100 : 0;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 bg-[#0a0a0c]">
@@ -46,7 +55,7 @@ export default function DashboardOverview() {
           </div>
           <div className="space-y-1">
             <p className="text-2xl font-mono font-bold text-slate-100">
-              ${portfolio?.fiat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? '0.00'}
+              ${fiat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <p className="text-[10px] text-slate-500 font-medium">Available Fiat Currency</p>
           </div>
@@ -62,9 +71,9 @@ export default function DashboardOverview() {
           </div>
           <div className="space-y-1">
             <p className="text-2xl font-mono font-bold text-slate-100">
-              {portfolio?.holdings['ORIS']?.toLocaleString() ?? '0'} <span className="text-sm text-slate-500">ORIS</span>
+              ${holdingsValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
-            <p className="text-[10px] text-slate-500 font-medium">Synthex / ORIS Index Asset</p>
+            <p className="text-[10px] text-slate-500 font-medium">Combined Asset Value</p>
           </div>
         </div>
 
@@ -125,11 +134,11 @@ export default function DashboardOverview() {
               </thead>
               <tbody className="divide-y divide-[#1e293b]/40">
                 {[
-                  { symbol: 'ORIS', name: 'Synthex ORIS', price: orderbook?.best_bid ?? 0, change: '+2.45%', vol: '1.2M', trend: 'up' },
-                  { symbol: 'NIFTY', name: 'Nifty 50 Index', price: 22450.20, change: '-0.12%', vol: '8.4M', trend: 'down' },
-                  { symbol: 'RELI', name: 'Reliance Ind.', price: 2980.50, change: '+1.10%', vol: '4.2M', trend: 'up' },
-                  { symbol: 'TATA', name: 'Tata Motors', price: 940.15, change: '+4.20%', vol: '2.8M', trend: 'up' },
-                  { symbol: 'HDFC', name: 'HDFC Bank', price: 1520.40, change: '-1.45%', vol: '5.1M', trend: 'down' },
+                  { symbol: 'SYNX', name: 'Synthex Index', price: marketPrices['SYNX'] ? (marketPrices['SYNX'].best_bid + marketPrices['SYNX'].best_ask) / 2 : 0, change: '+2.45%', vol: '1.2M', trend: 'up' },
+                  { symbol: 'NEXO', name: 'Nexo Protocol', price: marketPrices['NEXO'] ? (marketPrices['NEXO'].best_bid + marketPrices['NEXO'].best_ask) / 2 : 0, change: '-0.12%', vol: '8.4M', trend: 'down' },
+                  { symbol: 'VRTX', name: 'Vertex AI', price: marketPrices['VRTX'] ? (marketPrices['VRTX'].best_bid + marketPrices['VRTX'].best_ask) / 2 : 0, change: '+1.10%', vol: '4.2M', trend: 'up' },
+                  { symbol: 'AEGS', name: 'Aegis Shield', price: marketPrices['AEGS'] ? (marketPrices['AEGS'].best_bid + marketPrices['AEGS'].best_ask) / 2 : 0, change: '+4.20%', vol: '2.8M', trend: 'up' },
+                  { symbol: 'BTC', name: 'Bitcoin', price: marketPrices['BTC'] ? (marketPrices['BTC'].best_bid + marketPrices['BTC'].best_ask) / 2 : 0, change: '-1.45%', vol: '5.1M', trend: 'down' },
                 ].map((m, i) => (
                   <tr key={i} className="hover:bg-[#1e293b]/20 transition-colors group">
                     <td className="px-5 py-4">
