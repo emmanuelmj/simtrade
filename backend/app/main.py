@@ -40,6 +40,9 @@ from app.models import (
     Trade,
     User,
     UserRole,
+    Competition,
+    CompetitionStatus,
+    Participant,
 )
 from app.schemas import (
     InjectNewsRequest, 
@@ -157,21 +160,21 @@ async def startup():
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def get_user_portfolio_data(session: AsyncSession, user_id: uuid.UUID) -> dict:
-    user_r = await session.execute(select(User).where(User.id == user_id))
-    user = user_r.scalar_one()
+async def get_user_portfolio_data(session: AsyncSession, participant_id: uuid.UUID) -> dict:
+    part_r = await session.execute(select(Participant).where(Participant.id == participant_id))
+    participant = part_r.scalar_one()
     
     holdings_r = await session.execute(
         select(Asset.symbol, Holding.quantity)
         .join(Holding, Holding.asset_id == Asset.id)
-        .where(Holding.user_id == user_id)
+        .where(Holding.participant_id == participant_id)
     )
     holdings = {h.symbol: float(h.quantity) for h in holdings_r}
 
     positions_r = await session.execute(
         select(Asset.symbol, Position.quantity, Position.avg_entry_price)
         .join(Position, Position.asset_id == Asset.id)
-        .where(Position.user_id == user_id)
+        .where(Position.participant_id == participant_id)
     )
     positions = [{
         "symbol": p.symbol,
@@ -180,7 +183,7 @@ async def get_user_portfolio_data(session: AsyncSession, user_id: uuid.UUID) -> 
     } for p in positions_r]
 
     return {
-        "fiat_balance": float(user.fiat_balance),
+        "fiat_balance": float(participant.current_fiat),
         "holdings": holdings,
         "positions": positions
     }
@@ -198,16 +201,30 @@ async def verify_admin_key(x_admin_key: str = Header(None)):
 
 
 # ---------------------------------------------------------------------------
-# WebSocket Endpoint — /ws/trade
+# WebSocket Endpoint — /ws/trade/{competition_id}
 # ---------------------------------------------------------------------------
 
-@app.websocket("/ws/trade")
-async def ws_trade(websocket: WebSocket):
+@app.websocket("/ws/trade/{competition_id}")
+async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
     # Accept the raw connection first, then wait for JOIN
     await websocket.accept()
-    user_id: uuid.UUID | None = None
+    participant_id: uuid.UUID | None = None
 
     try:
+        # Check if competition exists and is active
+        async with async_session() as session:
+            comp_r = await session.execute(
+                select(Competition).where(Competition.id == competition_id)
+            )
+            comp = comp_r.scalar_one_or_none()
+            if not comp or comp.status != CompetitionStatus.ACTIVE:
+                await websocket.send_json({
+                    "type": "ERROR",
+                    "data": {"message": "Competition not found or not active."},
+                })
+                await websocket.close()
+                return
+
         # --- Phase 1: Wait for JOIN message ---
         raw = await websocket.receive_json()
         msg_type = raw.get("type", "")
@@ -229,7 +246,7 @@ async def ws_trade(websocket: WebSocket):
             await websocket.close()
             return
 
-        # Create or find user + portfolio
+        # Create or find user + participant + portfolio
         async with async_session() as session:
             async with session.begin():
                 user_r = await session.execute(
@@ -241,34 +258,51 @@ async def ws_trade(websocket: WebSocket):
                     user = User(
                         username=username, 
                         role=UserRole.PARTICIPANT,
-                        fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE))
                     )
                     session.add(user)
                     await session.flush()
+                
+                # Check if participant exists for this competition
+                part_r = await session.execute(
+                    select(Participant).where(Participant.user_id == user.id, Participant.competition_id == competition_id)
+                )
+                participant = part_r.scalar_one_or_none()
+                
+                if not participant:
+                    # Create participant for this competition
+                    participant = Participant(
+                        user_id=user.id,
+                        competition_id=competition_id,
+                        current_fiat=comp.starting_balance
+                    )
+                    session.add(participant)
+                    await session.flush()
                     
-                    # Create initial ORIS holding
+                    # Create initial ORIS holding for participant
                     asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
                     asset = asset_r.scalar_one_or_none()
                     if asset:
-                        holding = Holding(user_id=user.id, asset_id=asset.id, quantity=Decimal("0"))
+                        holding = Holding(participant_id=participant.id, asset_id=asset.id, quantity=Decimal("0"))
                         session.add(holding)
 
-                    logger.info(f"New participant created: {username}")
+                    logger.info(f"New participant created for room {competition_id}: {username}")
 
-                user_id = user.id
+                participant_id = participant.id
 
-        # Register with manager (re-use the already-accepted websocket)
-        manager._connections[user_id] = websocket
-        logger.info(f"Participant joined: {username} ({manager.active_count} total)")
+        # Register with manager (we already accepted above, so we just manually add to rooms)
+        if competition_id not in manager._rooms:
+            manager._rooms[competition_id] = {}
+        manager._rooms[competition_id][participant_id] = websocket
+        logger.info(f"Participant joined room {competition_id}: {username} ({manager.active_count_in_room(competition_id)} total in room)")
 
         # Send current orderbook snapshot as welcome
         async with async_session() as session:
-            ob = await get_orderbook_snapshot(session)
+            ob = await get_orderbook_snapshot(session, competition_id)
             if ob:
                 await websocket.send_json(ob)
                 
             # Fetch and send user's current fiat and holdings
-            port_data = await get_user_portfolio_data(session, user_id)
+            port_data = await get_user_portfolio_data(session, participant_id)
             await websocket.send_json({
                 "type": "portfolio_update",
                 "data": port_data
@@ -305,7 +339,7 @@ async def ws_trade(websocket: WebSocket):
                     try:
                         async with async_session() as session:
                             result = await execute_market_order(
-                                session, user_id, action, symbol, quantity,
+                                session, competition_id, participant_id, action, symbol, quantity,
                             )
                         break
                     except LockContentionError:
@@ -325,7 +359,7 @@ async def ws_trade(websocket: WebSocket):
                 if result and result.get("status") == "SUCCESS":
                     # Send immediate portfolio update to the user
                     async with async_session() as session:
-                        port_data = await get_user_portfolio_data(session, user_id)
+                        port_data = await get_user_portfolio_data(session, participant_id)
                         await websocket.send_json({
                             "type": "portfolio_update",
                             "data": port_data
@@ -341,27 +375,27 @@ async def ws_trade(websocket: WebSocket):
                             "trade_id": result["trade_id"],
                         },
                     }
-                    await manager.broadcast(trade_broadcast)
+                    await manager.broadcast_to_room(competition_id, trade_broadcast)
 
-                    # Broadcast updated orderbook
+                    # Broadcast updated orderbook to room
                     async with async_session() as session:
-                        ob = await get_orderbook_snapshot(session)
+                        ob = await get_orderbook_snapshot(session, competition_id)
                         if ob:
-                            await manager.broadcast(ob)
+                            await manager.broadcast_to_room(competition_id, ob)
 
-                        # Broadcast leaderboard
+                        # Broadcast leaderboard to room
                         lb = await get_leaderboard(
-                            session, result["executed_price"], settings.INITIAL_FIAT_BALANCE,
+                            session, competition_id, result["executed_price"], comp.starting_balance,
                         )
-                        await manager.broadcast(lb)
+                        await manager.broadcast_to_room(competition_id, lb)
 
     except WebSocketDisconnect:
         pass
     except Exception:
-        logger.exception(f"WebSocket error for user {user_id}")
+        logger.exception(f"WebSocket error for participant {participant_id}")
     finally:
-        if user_id:
-            manager.disconnect(user_id)
+        if participant_id:
+            manager.disconnect(competition_id, participant_id)
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +434,7 @@ async def inject_news(
             ms.updated_at = now
             asset_id = ms.asset_id
 
-            # Immediate House Bot re-quote
+            # Immediate House Bot re-quote for all ACTIVE competitions
             bot_r = await session.execute(
                 select(User.id).where(User.role == UserRole.HOUSE_BOT).limit(1)
             )
@@ -408,12 +442,39 @@ async def inject_news(
 
             half_spread = Decimal(str(settings.HALF_SPREAD))
             bot_qty = Decimal(str(settings.HOUSE_BOT_QUANTITY))
-            best_bid, best_ask = await house_bot_requote(
-                session, house_bot_id, asset_id, new_fv, half_spread, bot_qty,
+            
+            active_comps_r = await session.execute(
+                select(Competition).where(Competition.status == CompetitionStatus.ACTIVE)
             )
+            active_comps = active_comps_r.scalars().all()
+            
+            best_bid, best_ask = None, None
+            
+            for comp in active_comps:
+                part_r = await session.execute(
+                    select(Participant).where(Participant.user_id == house_bot_id, Participant.competition_id == comp.id)
+                )
+                hb_part = part_r.scalar_one_or_none()
+                if hb_part:
+                    best_bid, best_ask = await house_bot_requote(
+                        session, hb_part.id, comp.id, asset_id, new_fv, half_spread, bot_qty,
+                    )
+                    ob_payload = {
+                        "type": "orderbook_update",
+                        "data": {
+                            "timestamp": int(time.time() * 1000),
+                            "symbol": "ORIS",
+                            "best_bid": best_bid,
+                            "best_ask": best_ask,
+                            "spread": round(best_ask - best_bid, 6),
+                            "bid_quantity": settings.HOUSE_BOT_QUANTITY,
+                            "ask_quantity": settings.HOUSE_BOT_QUANTITY,
+                        },
+                    }
+                    await manager.broadcast_to_room(comp.id, ob_payload)
 
-    # Broadcast news_alert
-    await manager.broadcast({
+    # Broadcast news_alert globally
+    await manager.broadcast_global({
         "type": "news_alert",
         "data": {
             "event_id": event_id,
@@ -424,28 +485,13 @@ async def inject_news(
         },
     })
 
-    # Broadcast repriced orderbook
-    ob_payload = {
-        "type": "orderbook_update",
-        "data": {
-            "timestamp": int(time.time() * 1000),
-            "symbol": "ORIS",
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "spread": round(best_ask - best_bid, 6),
-            "bid_quantity": settings.HOUSE_BOT_QUANTITY,
-            "ask_quantity": settings.HOUSE_BOT_QUANTITY,
-        },
-    }
-    await manager.broadcast(ob_payload)
-
     return InjectNewsResponse(
         status="success",
         event_id=event_id,
-        message="News event injected. House Bot requoted. Clients notified.",
+        message="News event injected. House Bot requoted across active competitions. Clients notified.",
         new_fair_value_approx=round(float(new_fv), 2),
-        new_best_bid=best_bid,
-        new_best_ask=best_ask,
+        new_best_bid=best_bid or float(new_fv),
+        new_best_ask=best_ask or float(new_fv),
     )
 
 
@@ -456,10 +502,19 @@ async def get_market_state(_: None = Depends(verify_admin_key)):
         ms_r = await session.execute(select(MarketState).limit(1))
         ms = ms_r.scalar_one()
 
-        ob = await get_orderbook_snapshot(session)
-        best_bid = ob["data"]["best_bid"] if ob else None
-        best_ask = ob["data"]["best_ask"] if ob else None
-        spread = ob["data"]["spread"] if ob else None
+        best_bid, best_ask, spread = None, None, None
+        
+        # Try to get orderbook snapshot for the first active competition
+        comp_r = await session.execute(
+            select(Competition.id).where(Competition.status == CompetitionStatus.ACTIVE).limit(1)
+        )
+        comp_id = comp_r.scalar_one_or_none()
+        if comp_id:
+            ob = await get_orderbook_snapshot(session, comp_id)
+            if ob:
+                best_bid = ob["data"]["best_bid"]
+                best_ask = ob["data"]["best_ask"]
+                spread = ob["data"]["spread"]
 
         # Active news
         now = datetime.now(timezone.utc)
@@ -492,39 +547,17 @@ async def get_market_state(_: None = Depends(verify_admin_key)):
 
 @app.post("/api/admin/reset-session", response_model=ResetSessionResponse)
 async def reset_session(_: None = Depends(verify_admin_key)):
-    """Reset all trades, portfolios, orders, and fair value."""
+    """Reset all trades, portfolios, orders, participants, competitions, and fair value."""
     async with async_session() as session:
         async with session.begin():
-            # Delete trades
+            # Delete data in order of constraints
             await session.execute(delete(Trade))
-            # Cancel all orders
-            await session.execute(
-                update(Order).values(status=OrderStatus.CANCELLED)
-            )
-            # Reset participant fiat balances
-            await session.execute(
-                update(User)
-                .where(User.role == UserRole.PARTICIPANT)
-                .values(fiat_balance=Decimal(str(settings.INITIAL_FIAT_BALANCE)))
-            )
-            # Clear holdings and positions
+            await session.execute(delete(Order))
             await session.execute(delete(Holding))
             await session.execute(delete(Position))
+            await session.execute(delete(Participant))
+            await session.execute(delete(Competition))
 
-            # Reset house bot
-            await session.execute(
-                update(User)
-                .where(User.role == UserRole.HOUSE_BOT)
-                .values(fiat_balance=Decimal("1000000"))
-            )
-            # Re-seed house bot holding
-            asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
-            asset = asset_r.scalar_one_or_none()
-            bot_r = await session.execute(select(User.id).where(User.role == UserRole.HOUSE_BOT))
-            bot_id = bot_r.scalar_one()
-            if asset:
-                bot_holding = Holding(user_id=bot_id, asset_id=asset.id, quantity=Decimal("1000000"))
-                session.add(bot_holding)
             # Reset market state
             await session.execute(
                 update(MarketState).values(
@@ -542,7 +575,7 @@ async def reset_session(_: None = Depends(verify_admin_key)):
 
     return ResetSessionResponse(
         status="success",
-        message=f"Session reset. All portfolios restored to {settings.INITIAL_FIAT_BALANCE:.2f} fiat.",
+        message="Session reset. All competitions, participants, and trade data wiped.",
     )
 
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.connection_manager import ConnectionManager
 from app.config import settings
-from app.models import Asset, MarketState, NewsEvent, Order, OrderSide, OrderStatus, OrderType, User, UserRole
+from app.models import Asset, MarketState, NewsEvent, Order, OrderSide, OrderStatus, OrderType, User, UserRole, Competition, CompetitionStatus, Participant
 
 logger = logging.getLogger("synthex.tick")
 
@@ -42,7 +42,8 @@ def _calculate_fair_value(
 
 async def house_bot_requote(
     session,
-    house_bot_id,
+    house_bot_participant_id,
+    competition_id,
     asset_id,
     fair_value: Decimal,
     half_spread: Decimal,
@@ -50,7 +51,7 @@ async def house_bot_requote(
 ) -> tuple[float, float]:
     """
     Atomic cancel-and-replace per TRD §2.3:
-    1. Cancel all open House Bot orders.
+    1. Cancel all open House Bot orders in this competition.
     2. Insert new BID at (fair_value - half_spread).
     3. Insert new ASK at (fair_value + half_spread).
     Returns (best_bid, best_ask).
@@ -61,16 +62,21 @@ async def house_bot_requote(
     # Clamp bid to positive
     bid_price = max(bid_price, Decimal("0.01"))
 
-    # 1. Cancel existing open orders
+    # 1. Cancel existing open orders for this bot in this competition
     await session.execute(
         update(Order)
-        .where(Order.owner_id == house_bot_id, Order.status == OrderStatus.OPEN)
+        .where(
+            Order.participant_id == house_bot_participant_id, 
+            Order.competition_id == competition_id,
+            Order.status == OrderStatus.OPEN
+        )
         .values(status=OrderStatus.CANCELLED)
     )
 
     # 2. Insert new BID
     bid_order = Order(
-        owner_id=house_bot_id,
+        participant_id=house_bot_participant_id,
+        competition_id=competition_id,
         asset_id=asset_id,
         side=OrderSide.BID,
         order_type=OrderType.LIMIT,
@@ -82,7 +88,8 @@ async def house_bot_requote(
 
     # 3. Insert new ASK
     ask_order = Order(
-        owner_id=house_bot_id,
+        participant_id=house_bot_participant_id,
+        competition_id=competition_id,
         asset_id=asset_id,
         side=OrderSide.ASK,
         order_type=OrderType.LIMIT,
@@ -119,8 +126,8 @@ async def fair_value_tick_loop(
     """
     The heart of Synthex — runs every 1 second.
     Step 1: Update Fair Value (stochastic or news-overridden).
-    Step 2: House Bot atomic re-quote.
-    Step 3: Broadcast orderbook_update.
+    Step 2: Find all ACTIVE competitions.
+    Step 3: House Bot atomic re-quote per competition and broadcast orderbook_update.
     """
     half_spread = Decimal(str(settings.HALF_SPREAD))
     bot_quantity = Decimal(str(settings.HOUSE_BOT_QUANTITY))
@@ -172,24 +179,42 @@ async def fair_value_tick_loop(
                     house_bot_id = bot_result.scalar_one()
 
             # ----------------------------------------------------------
-            # Step 2 — House Bot re-quote (separate transaction, per TRD)
+            # Step 2 & 3 — House Bot re-quote & broadcast per competition
             # ----------------------------------------------------------
             async with session_factory() as session:
                 async with session.begin():
-                    best_bid, best_ask = await house_bot_requote(
-                        session, house_bot_id, asset_id,
-                        new_fv, half_spread, bot_quantity,
+                    active_comps_r = await session.execute(
+                        select(Competition).where(Competition.status == CompetitionStatus.ACTIVE)
                     )
+                    active_comps = active_comps_r.scalars().all()
+                    
+                    for comp in active_comps:
+                        # Ensure House Bot has a participant record for this comp
+                        part_r = await session.execute(
+                            select(Participant).where(Participant.user_id == house_bot_id, Participant.competition_id == comp.id)
+                        )
+                        hb_part = part_r.scalar_one_or_none()
+                        if not hb_part:
+                            hb_part = Participant(
+                                user_id=house_bot_id,
+                                competition_id=comp.id,
+                                current_fiat=Decimal("1000000")
+                            )
+                            session.add(hb_part)
+                            await session.flush()
+                        
+                        best_bid, best_ask = await house_bot_requote(
+                            session, hb_part.id, comp.id, asset_id, new_fv, half_spread, bot_quantity
+                        )
+                        
+                        # Broadcast orderbook_update to the specific competition room
+                        payload = _build_orderbook_payload(best_bid, best_ask, settings.HOUSE_BOT_QUANTITY)
+                        await manager.broadcast_to_room(comp.id, payload)
 
-            # ----------------------------------------------------------
-            # Step 3 — Broadcast orderbook_update
-            # ----------------------------------------------------------
-            payload = _build_orderbook_payload(best_bid, best_ask, settings.HOUSE_BOT_QUANTITY)
-            await manager.broadcast(payload)
-
-            logger.debug(f"Tick: FV={new_fv:.2f} Bid={best_bid:.2f} Ask={best_ask:.2f}")
+            logger.debug(f"Tick: FV={new_fv:.2f}")
 
         except Exception:
             logger.exception("Tick loop error")
 
         await asyncio.sleep(1)
+

@@ -24,6 +24,7 @@ from app.models import (
     Position,
     Trade,
     User,
+    Participant,
     UserRole,
 )
 
@@ -37,7 +38,8 @@ class LockContentionError(Exception):
 
 async def execute_market_order(
     session: AsyncSession,
-    user_id: uuid.UUID,
+    competition_id: uuid.UUID,
+    participant_id: uuid.UUID,
     action: str,
     symbol: str,
     quantity: int,
@@ -63,6 +65,7 @@ async def execute_market_order(
                 order_q = (
                     select(Order)
                     .where(
+                        Order.competition_id == competition_id,
                         Order.asset_id == asset.id,
                         Order.side == OrderSide.ASK,
                         Order.status == OrderStatus.OPEN,
@@ -76,6 +79,7 @@ async def execute_market_order(
                 order_q = (
                     select(Order)
                     .where(
+                        Order.competition_id == competition_id,
                         Order.asset_id == asset.id,
                         Order.side == OrderSide.BID,
                         Order.status == OrderStatus.OPEN,
@@ -99,34 +103,34 @@ async def execute_market_order(
             execution_price = matched_order.price
             total_cost = execution_price * qty_dec
 
-            # 3. Lock participant data (User, Holding, Position)
-            user_r = await session.execute(
-                select(User).where(User.id == user_id).with_for_update()
+            # 3. Lock participant data (Participant, Holding, Position)
+            participant_r = await session.execute(
+                select(Participant).where(Participant.id == participant_id).with_for_update()
             )
-            user = user_r.scalar_one_or_none()
-            if not user:
-                return _fail("VALIDATION_ERROR", "User not found.")
+            participant = participant_r.scalar_one_or_none()
+            if not participant:
+                return _fail("VALIDATION_ERROR", "Participant not found.")
 
             holding_r = await session.execute(
-                select(Holding).where(Holding.user_id == user_id, Holding.asset_id == asset.id).with_for_update()
+                select(Holding).where(Holding.participant_id == participant_id, Holding.asset_id == asset.id).with_for_update()
             )
             holding = holding_r.scalar_one_or_none()
             if not holding:
-                holding = Holding(user_id=user_id, asset_id=asset.id, quantity=Decimal("0"))
+                holding = Holding(participant_id=participant_id, asset_id=asset.id, quantity=Decimal("0"))
                 session.add(holding)
 
             position_r = await session.execute(
-                select(Position).where(Position.user_id == user_id, Position.asset_id == asset.id).with_for_update()
+                select(Position).where(Position.participant_id == participant_id, Position.asset_id == asset.id).with_for_update()
             )
             position = position_r.scalar_one_or_none()
             if not position:
-                position = Position(user_id=user_id, asset_id=asset.id, quantity=Decimal("0"), avg_entry_price=Decimal("0"))
+                position = Position(participant_id=participant_id, asset_id=asset.id, quantity=Decimal("0"), avg_entry_price=Decimal("0"))
                 session.add(position)
 
-            if action == "BUY" and user.fiat_balance < total_cost:
+            if action == "BUY" and participant.current_fiat < total_cost:
                 return _fail(
                     "INSUFFICIENT_FUNDS",
-                    f"Insufficient fiat balance. Required: {total_cost}, Available: {user.fiat_balance}",
+                    f"Insufficient fiat balance. Required: {total_cost}, Available: {participant.current_fiat}",
                 )
             if action == "SELL" and holding.quantity < qty_dec:
                 return _fail(
@@ -136,24 +140,31 @@ async def execute_market_order(
 
             # 4. Lock House Bot data
             bot_r = await session.execute(
-                select(User).where(User.role == UserRole.HOUSE_BOT).limit(1).with_for_update()
+                select(Participant)
+                .join(User)
+                .where(
+                    User.role == UserRole.HOUSE_BOT,
+                    Participant.competition_id == competition_id
+                )
+                .limit(1)
+                .with_for_update()
             )
             house_bot = bot_r.scalar_one()
 
             hholding_r = await session.execute(
-                select(Holding).where(Holding.user_id == house_bot.id, Holding.asset_id == asset.id).with_for_update()
+                select(Holding).where(Holding.participant_id == house_bot.id, Holding.asset_id == asset.id).with_for_update()
             )
             house_holding = hholding_r.scalar_one_or_none()
             if not house_holding:
-                house_holding = Holding(user_id=house_bot.id, asset_id=asset.id, quantity=Decimal("1000000"))
+                house_holding = Holding(participant_id=house_bot.id, asset_id=asset.id, quantity=Decimal("1000000"))
                 session.add(house_holding)
 
             # 5. Atomic balance adjustments
             now = datetime.now(timezone.utc)
 
             if action == "BUY":
-                buyer_id, seller_id = user_id, house_bot.id
-                user.fiat_balance -= total_cost
+                buyer_id, seller_id = participant_id, house_bot.id
+                participant.current_fiat -= total_cost
                 holding.quantity += qty_dec
                 
                 # Update Position avg entry price
@@ -164,11 +175,11 @@ async def execute_market_order(
                     ) / new_total_qty
                 position.quantity += qty_dec
                 
-                house_bot.fiat_balance += total_cost
+                house_bot.current_fiat += total_cost
                 house_holding.quantity -= qty_dec
             else:
-                buyer_id, seller_id = house_bot.id, user_id
-                user.fiat_balance += total_cost
+                buyer_id, seller_id = house_bot.id, participant_id
+                participant.current_fiat += total_cost
                 holding.quantity -= qty_dec
                 
                 # Update Position quantity (avg price remains same on SELL usually, or we close part of it)
@@ -177,7 +188,7 @@ async def execute_market_order(
                 if position.quantity <= 0:
                     position.avg_entry_price = Decimal("0")
                 
-                house_bot.fiat_balance -= total_cost
+                house_bot.current_fiat -= total_cost
                 house_holding.quantity += qty_dec
 
             # 6. Update matched order (deduct quantity; FILL if depleted)
@@ -188,6 +199,7 @@ async def execute_market_order(
 
             # 7. Insert immutable trade record
             trade = Trade(
+                competition_id=competition_id,
                 asset_id=asset.id,
                 buyer_id=buyer_id,
                 seller_id=seller_id,
@@ -215,7 +227,7 @@ async def execute_market_order(
                 "executed_price": float(execution_price),
                 "quantity": quantity,
                 "total_cost": float(total_cost),
-                "new_fiat_balance": float(user.fiat_balance),
+                "new_fiat_balance": float(participant.current_fiat),
                 "new_asset_quantity": float(holding.quantity),
                 "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} ORIS at {execution_price}",
             }
@@ -226,7 +238,7 @@ async def execute_market_order(
         raise
 
 
-async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") -> dict | None:
+async def get_orderbook_snapshot(session: AsyncSession, competition_id: uuid.UUID, symbol: str = "ORIS") -> dict | None:
     """Read current best bid/ask from the CLOB."""
     asset_r = await session.execute(select(Asset).where(Asset.symbol == symbol))
     asset = asset_r.scalar_one_or_none()
@@ -236,6 +248,7 @@ async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") ->
     bid_r = await session.execute(
         select(Order.price, Order.quantity)
         .where(
+            Order.competition_id == competition_id,
             Order.asset_id == asset.id,
             Order.side == OrderSide.BID,
             Order.status == OrderStatus.OPEN,
@@ -248,6 +261,7 @@ async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") ->
     ask_r = await session.execute(
         select(Order.price, Order.quantity)
         .where(
+            Order.competition_id == competition_id,
             Order.asset_id == asset.id,
             Order.side == OrderSide.ASK,
             Order.status == OrderStatus.OPEN,
@@ -278,19 +292,21 @@ async def get_orderbook_snapshot(session: AsyncSession, symbol: str = "ORIS") ->
     }
 
 
-async def get_leaderboard(session: AsyncSession, ltp: float, initial_fiat: float) -> dict:
+async def get_leaderboard(session: AsyncSession, competition_id: uuid.UUID, ltp: float, initial_fiat: float) -> dict:
     """Compute leaderboard sorted by total portfolio value."""
     result = await session.execute(
-        select(User.username, User.fiat_balance, func.sum(Holding.quantity))
-        .join(Holding, Holding.user_id == User.id, isouter=True)
-        .where(User.role == UserRole.PARTICIPANT)
-        .group_by(User.id, User.username, User.fiat_balance)
+        select(User.username, Participant.current_fiat, func.sum(Holding.quantity))
+        .select_from(Participant)
+        .join(User, User.id == Participant.user_id)
+        .join(Holding, Holding.participant_id == Participant.id, isouter=True)
+        .where(Participant.competition_id == competition_id, User.role == UserRole.PARTICIPANT)
+        .group_by(Participant.id, User.username, Participant.current_fiat)
     )
     rows = result.all()
 
     rankings = []
     for username, fiat, asset_qty in rows:
-        total_value = float(fiat) + float(asset_qty) * ltp
+        total_value = float(fiat) + (float(asset_qty) if asset_qty else 0.0) * ltp
         pnl = total_value - initial_fiat
         pnl_pct = round((pnl / initial_fiat) * 100, 2) if initial_fiat > 0 else 0
         rankings.append({
@@ -315,3 +331,4 @@ async def get_leaderboard(session: AsyncSession, ltp: float, initial_fiat: float
 
 def _fail(reason: str, message: str) -> dict:
     return {"status": "FAILED", "reason": reason, "message": message}
+
