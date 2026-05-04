@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex bg-[#0a0a0c] text-slate-100 font-sans overflow-hidden">
+      <body className="min-h-full flex bg-[#f8f9fa] dark:bg-[#0a0a0c] text-slate-900 dark:text-slate-100 font-sans overflow-hidden">
         <ClientAppShell>
           {children}
         </ClientAppShell>

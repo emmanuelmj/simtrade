@@ -31,15 +31,19 @@ export default function TradingChart() {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const candleRef = useRef<OHLC | null>(null);
-  const historyRef = useRef<OHLC[]>([]);
+  // Per-symbol candle history
+  const historyMapRef = useRef<Record<string, OHLC[]>>({});
+  const prevSymbolRef = useRef<string | null>(null);
 
-  const orderbook = useMarketStore((s) => s.orderbook);
+  const selectedSymbol = useMarketStore((s) => s.selectedSymbol);
+  const marketPrices   = useMarketStore((s) => s.marketPrices);
+  const data = marketPrices[selectedSymbol];
 
-  const [prevClose, setPrevClose]     = useState<number | null>(null);
+  const [prevClose, setPrevClose]       = useState<number | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
-  const [priceChange, setPriceChange]  = useState<number>(0);
-  const [istTime, setIstTime]          = useState('');
-  const [istDate, setIstDate]          = useState('');
+  const [priceChange, setPriceChange]   = useState<number>(0);
+  const [istTime, setIstTime]           = useState('');
+  const [istDate, setIstDate]           = useState('');
   const [selectedRange, setSelectedRange] = useState('1H');
 
   // Live IST clock
@@ -94,7 +98,6 @@ export default function TradingChart() {
       },
       localization: {
         timeFormatter: (utcSec: number) => {
-          // utcSec already has IST offset baked in → subtract to get real UTC → format as IST
           const realUtcMs = (utcSec - IST_OFFSET_S) * 1000;
           return new Date(realUtcMs).toLocaleTimeString('en-IN', {
             timeZone: 'Asia/Kolkata',
@@ -108,8 +111,8 @@ export default function TradingChart() {
     });
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor:            '#22c55e',   // green  – price rose
-      downColor:          '#ef4444',   // red    – price fell
+      upColor:            '#22c55e',
+      downColor:          '#ef4444',
       borderUpColor:      '#16a34a',
       borderDownColor:    '#dc2626',
       wickUpColor:        '#22c55e',
@@ -136,10 +139,39 @@ export default function TradingChart() {
     };
   }, []);
 
+  /* ── When selectedSymbol changes, wipe chart and load symbol's history ── */
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    if (prevSymbolRef.current === selectedSymbol) return;
+
+    // Save the current candle to the old symbol's history
+    if (prevSymbolRef.current && candleRef.current) {
+      const oldHistory = historyMapRef.current[prevSymbolRef.current] || [];
+      historyMapRef.current[prevSymbolRef.current] = [...oldHistory, { ...candleRef.current }].slice(-300);
+    }
+    candleRef.current = null;
+
+    // Load new symbol's history
+    const newHistory = historyMapRef.current[selectedSymbol] || [];
+    seriesRef.current.setData(newHistory.map((c) => ({ ...c, time: c.time as Time })));
+
+    if (newHistory.length > 0) {
+      const lastCandle = newHistory[newHistory.length - 1];
+      setCurrentPrice(lastCandle.close);
+      setPrevClose(lastCandle.open);
+      setPriceChange(lastCandle.close - lastCandle.open);
+    } else {
+      setCurrentPrice(null);
+      setPrevClose(null);
+      setPriceChange(0);
+    }
+
+    prevSymbolRef.current = selectedSymbol;
+  }, [selectedSymbol]);
+
   const handleRangeChange = (range: string) => {
     setSelectedRange(range);
     if (!chartRef.current) return;
-
     const timeScale = chartRef.current.timeScale();
     const now = Math.floor(Date.now() / 1000) + IST_OFFSET_S;
 
@@ -163,34 +195,33 @@ export default function TradingChart() {
 
   /* ── Feed price ticks into candle aggregator ─────────────────────── */
   useEffect(() => {
-    if (!seriesRef.current || !orderbook) return;
+    if (!seriesRef.current || !data) return;
+    // Only process ticks for the currently selected symbol
+    if (data.symbol !== selectedSymbol) return;
 
-    const mid = (orderbook.best_bid + orderbook.best_ask) / 2;
+    const mid = (data.best_bid + data.best_ask) / 2;
     const nowSec     = Math.floor(Date.now() / 1000);
-    // Bucket in UTC, then shift to IST for chart display
     const bucketUTC  = Math.floor(nowSec / CANDLE_INTERVAL_S) * CANDLE_INTERVAL_S;
-    const bucketTime = bucketUTC + IST_OFFSET_S; // IST-shifted
+    const bucketTime = bucketUTC + IST_OFFSET_S;
 
     setCurrentPrice(mid);
 
     const existing = candleRef.current;
+    const history = historyMapRef.current[selectedSymbol] || [];
 
     if (!existing || existing.time !== bucketTime) {
-      // Close previous candle and push to history
       if (existing) {
         const closed = { ...existing };
-        historyRef.current = [...historyRef.current, closed].slice(-300); // keep last 300
+        historyMapRef.current[selectedSymbol] = [...history, closed].slice(-300);
         setPrevClose(closed.close);
         setPriceChange(closed.close - closed.open);
       }
-      // Open a brand-new candle
       const newCandle: OHLC = { time: bucketTime, open: mid, high: mid, low: mid, close: mid };
       candleRef.current = newCandle;
 
-      const allData = [...historyRef.current, newCandle];
+      const allData = [...(historyMapRef.current[selectedSymbol] || []), newCandle];
       seriesRef.current.setData(allData.map((c) => ({ ...c, time: c.time as Time })));
     } else {
-      // Update the open candle in-place
       const updated: OHLC = {
         ...existing,
         high:  Math.max(existing.high, mid),
@@ -200,27 +231,24 @@ export default function TradingChart() {
       candleRef.current = updated;
       seriesRef.current.update({ ...updated, time: updated.time as Time });
     }
-  }, [orderbook]);
+  }, [data, selectedSymbol]);
 
   const isUp = currentPrice !== null && prevClose !== null ? currentPrice >= prevClose : true;
   const priceColor = isUp ? '#22c55e' : '#ef4444';
 
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative bg-white dark:bg-[#0d1117]">
       {/* Price overlay */}
-      <div className="absolute top-5 left-6 z-10 pointer-events-none select-none">
+      <div className="absolute top-4 left-5 z-10 pointer-events-none select-none">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-accent/20 border border-accent/30 flex items-center justify-center font-bold text-accent text-sm">
-            $O
-          </div>
           <div>
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">
-              Synthex / ORIS Index
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.15em]">
+              ${selectedSymbol}
             </p>
             {currentPrice !== null && (
               <div className="flex items-baseline gap-3">
                 <span
-                  className="text-3xl font-mono font-bold tracking-tighter transition-colors duration-300"
+                  className="text-2xl font-mono font-bold tracking-tighter transition-colors duration-300"
                   style={{ color: priceColor }}
                 >
                   ${currentPrice.toFixed(2)}
@@ -232,19 +260,18 @@ export default function TradingChart() {
                   {priceChange >= 0 ? '▲' : '▼'}{' '}
                   {Math.abs(priceChange).toFixed(2)}
                 </span>
-                <span className="text-[10px] text-bull font-mono font-bold animate-pulse">
+                <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-mono font-bold animate-pulse">
                   LIVE
                 </span>
               </div>
             )}
-            {/* IST live clock */}
             {istTime && (
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-[13px] font-mono font-bold text-slate-300 tabular-nums tracking-widest">
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[11px] font-mono font-bold text-slate-500 dark:text-slate-400 tabular-nums tracking-wider">
                   {istTime}
                 </span>
-                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">IST</span>
-                <span className="text-[10px] text-slate-600">{istDate}</span>
+                <span className="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest">IST</span>
+                <span className="text-[9px] text-slate-400 dark:text-slate-600">{istDate}</span>
               </div>
             )}
           </div>
@@ -255,30 +282,28 @@ export default function TradingChart() {
       <div ref={chartContainerRef} className="w-full h-full" />
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-6 z-10 flex items-center gap-4 pointer-events-none">
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-[#22c55e] inline-block" />
-          <span className="text-[10px] font-bold text-tertiary uppercase">Bullish</span>
+      <div className="absolute bottom-3 left-5 z-10 flex items-center gap-3 pointer-events-none">
+        <div className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-sm bg-[#22c55e] inline-block" />
+          <span className="text-[9px] font-bold text-slate-500 dark:text-slate-600 uppercase">Bull</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm bg-[#ef4444] inline-block" />
-          <span className="text-[10px] font-bold text-tertiary uppercase">Bearish</span>
+        <div className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-sm bg-[#ef4444] inline-block" />
+          <span className="text-[9px] font-bold text-slate-500 dark:text-slate-600 uppercase">Bear</span>
         </div>
-        <div className="text-[10px] font-bold text-tertiary uppercase">
-          {CANDLE_INTERVAL_S}s candles · X-axis in IST (UTC+5:30)
-        </div>
+        <span className="text-[9px] font-bold text-slate-400 dark:text-slate-700">{CANDLE_INTERVAL_S}s · IST</span>
       </div>
 
       {/* Range Selector */}
-      <div className="absolute bottom-4 right-6 z-20 flex items-center gap-1 bg-[#16161a]/90 backdrop-blur-xl p-1 rounded-lg border border-[#1e293b]/50 shadow-2xl shadow-black/50">
+      <div className="absolute bottom-3 right-5 z-20 flex items-center gap-0.5 bg-white/90 dark:bg-[#16161a]/90 backdrop-blur-xl p-0.5 rounded border border-slate-200 dark:border-[#1e293b]/50">
         {['1H', '4H', '1D', '2D', '1W', '1M', 'ALL'].map((range) => (
           <button
             key={range}
             onClick={() => handleRangeChange(range)}
-            className={`px-3 py-1.5 rounded-md text-[10px] font-bold tracking-wider transition-all duration-300 ${
+            className={`px-2.5 py-1 rounded text-[9px] font-bold tracking-wider transition-all duration-200 ${
               selectedRange === range
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.2)]'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40 border border-transparent'
+                ? 'bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-500/20 dark:text-blue-400 dark:border-blue-500/30'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-600 dark:hover:text-slate-400 border border-transparent'
             }`}
           >
             {range}

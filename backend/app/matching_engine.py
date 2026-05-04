@@ -224,12 +224,13 @@ async def execute_market_order(
                 "status": "SUCCESS",
                 "trade_id": str(trade.id),
                 "action": action,
+                "symbol": symbol,
                 "executed_price": float(execution_price),
                 "quantity": quantity,
                 "total_cost": float(total_cost),
                 "new_fiat_balance": float(participant.current_fiat),
                 "new_asset_quantity": float(holding.quantity),
-                "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} ORIS at {execution_price}",
+                "message": f"{'Bought' if action == 'BUY' else 'Sold'} {quantity} {symbol} at {execution_price}",
             }
 
     except OperationalError as e:
@@ -238,75 +239,88 @@ async def execute_market_order(
         raise
 
 
-async def get_orderbook_snapshot(session: AsyncSession, competition_id: uuid.UUID, symbol: str = "ORIS") -> dict | None:
-    """Read current best bid/ask from the CLOB."""
-    asset_r = await session.execute(select(Asset).where(Asset.symbol == symbol))
-    asset = asset_r.scalar_one_or_none()
-    if not asset:
+async def get_orderbook_snapshot(session: AsyncSession, competition_id: uuid.UUID) -> dict | None:
+    """Read current best bid/ask from the CLOB for all assets."""
+    assets_r = await session.execute(select(Asset))
+    assets = assets_r.scalars().all()
+    
+    assets_data = []
+    for asset in assets:
+        bid_r = await session.execute(
+            select(Order.price, Order.quantity)
+            .where(
+                Order.competition_id == competition_id,
+                Order.asset_id == asset.id,
+                Order.side == OrderSide.BID,
+                Order.status == OrderStatus.OPEN,
+            )
+            .order_by(Order.price.desc())
+            .limit(1)
+        )
+        bid_row = bid_r.first()
+
+        ask_r = await session.execute(
+            select(Order.price, Order.quantity)
+            .where(
+                Order.competition_id == competition_id,
+                Order.asset_id == asset.id,
+                Order.side == OrderSide.ASK,
+                Order.status == OrderStatus.OPEN,
+            )
+            .order_by(Order.price.asc())
+            .limit(1)
+        )
+        ask_row = ask_r.first()
+
+        best_bid = float(bid_row[0]) if bid_row else None
+        best_ask = float(ask_row[0]) if ask_row else None
+        bid_qty = float(bid_row[1]) if bid_row else 0
+        ask_qty = float(ask_row[1]) if ask_row else 0
+
+        spread = round(best_ask - best_bid, 6) if (best_bid and best_ask) else None
+
+        if best_bid is not None and best_ask is not None:
+            assets_data.append({
+                "timestamp": int(time.time() * 1000),
+                "symbol": asset.symbol,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "spread": spread,
+                "bid_quantity": bid_qty,
+                "ask_quantity": ask_qty,
+            })
+            
+    if not assets_data:
         return None
-
-    bid_r = await session.execute(
-        select(Order.price, Order.quantity)
-        .where(
-            Order.competition_id == competition_id,
-            Order.asset_id == asset.id,
-            Order.side == OrderSide.BID,
-            Order.status == OrderStatus.OPEN,
-        )
-        .order_by(Order.price.desc())
-        .limit(1)
-    )
-    bid_row = bid_r.first()
-
-    ask_r = await session.execute(
-        select(Order.price, Order.quantity)
-        .where(
-            Order.competition_id == competition_id,
-            Order.asset_id == asset.id,
-            Order.side == OrderSide.ASK,
-            Order.status == OrderStatus.OPEN,
-        )
-        .order_by(Order.price.asc())
-        .limit(1)
-    )
-    ask_row = ask_r.first()
-
-    best_bid = float(bid_row[0]) if bid_row else None
-    best_ask = float(ask_row[0]) if ask_row else None
-    bid_qty = float(bid_row[1]) if bid_row else 0
-    ask_qty = float(ask_row[1]) if ask_row else 0
-
-    spread = round(best_ask - best_bid, 6) if (best_bid and best_ask) else None
 
     return {
         "type": "orderbook_update",
-        "data": {
-            "timestamp": int(time.time() * 1000),
-            "symbol": symbol,
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "spread": spread,
-            "bid_quantity": bid_qty,
-            "ask_quantity": ask_qty,
-        },
+        "data": assets_data,
     }
 
 
-async def get_leaderboard(session: AsyncSession, competition_id: uuid.UUID, ltp: float, initial_fiat: float) -> dict:
-    """Compute leaderboard sorted by total portfolio value."""
+async def get_leaderboard(session: AsyncSession, competition_id: uuid.UUID, initial_fiat: float) -> dict:
+    """Compute leaderboard sorted by total portfolio value across all assets."""
     result = await session.execute(
-        select(User.username, Participant.current_fiat, func.sum(Holding.quantity))
+        select(User.username, Participant.current_fiat, Holding.quantity, MarketState.last_traded_price)
         .select_from(Participant)
         .join(User, User.id == Participant.user_id)
         .join(Holding, Holding.participant_id == Participant.id, isouter=True)
+        .join(MarketState, MarketState.asset_id == Holding.asset_id, isouter=True)
         .where(Participant.competition_id == competition_id, User.role == UserRole.PARTICIPANT)
-        .group_by(Participant.id, User.username, Participant.current_fiat)
     )
     rows = result.all()
 
+    user_totals = {}
+    for username, fiat, asset_qty, ltp in rows:
+        if username not in user_totals:
+            user_totals[username] = float(fiat)
+        
+        if asset_qty is not None and ltp is not None:
+            user_totals[username] += float(asset_qty) * float(ltp)
+
     rankings = []
-    for username, fiat, asset_qty in rows:
-        total_value = float(fiat) + (float(asset_qty) if asset_qty else 0.0) * ltp
+    for username, total_value in user_totals.items():
         pnl = total_value - initial_fiat
         pnl_pct = round((pnl / initial_fiat) * 100, 2) if initial_fiat > 0 else 0
         rankings.append({
@@ -324,7 +338,6 @@ async def get_leaderboard(session: AsyncSession, competition_id: uuid.UUID, ltp:
         "type": "leaderboard_update",
         "data": {
             "rankings": rankings,
-            "ltp_used": ltp,
         },
     }
 

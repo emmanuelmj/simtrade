@@ -42,6 +42,7 @@ from app.models import (
     UserRole,
     Competition,
     CompetitionStatus,
+    CompetitionType,
     Participant,
 )
 from app.schemas import (
@@ -105,49 +106,51 @@ async def startup():
                 session.add(house_bot)
                 await session.flush()
 
-                # House Bot fiat and initial holding
-                house_bot.fiat_balance = Decimal("1000000")
-                
-                # House Bot holding for ORIS
-                asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
-                asset = asset_r.scalar_one_or_none()
-                if asset:
-                    holding = Holding(
-                        user_id=house_bot.id,
-                        asset_id=asset.id,
-                        quantity=Decimal("1000000")
-                    )
-                    session.add(holding)
-
-            # Asset: $ORIS — rename legacy "SIM" row if it still exists
-            legacy_r = await session.execute(
-                select(Asset).where(Asset.symbol == "SIM")
+            # Seed Global Sandbox competition
+            comp_r = await session.execute(
+                select(Competition).where(Competition.name == "Global Sandbox")
             )
-            legacy_asset = legacy_r.scalar_one_or_none()
-            if legacy_asset:
-                legacy_asset.symbol = "ORIS"
-                legacy_asset.name = "Synthex ORIS"
-                await session.flush()
-
-            asset_r = await session.execute(
-                select(Asset).where(Asset.symbol == "ORIS")
-            )
-            asset = asset_r.scalar_one_or_none()
-            if not asset:
-                asset = Asset(symbol="ORIS", name="Synthex ORIS")
-                session.add(asset)
-                await session.flush()
-
-            # Market state (single row)
-            ms_r = await session.execute(select(MarketState).limit(1))
-            ms = ms_r.scalar_one_or_none()
-            if not ms:
-                ms = MarketState(
-                    asset_id=asset.id,
-                    fair_value=Decimal(str(settings.INITIAL_FAIR_VALUE)),
-                    last_traded_price=Decimal(str(settings.INITIAL_FAIR_VALUE)),
+            global_comp = comp_r.scalar_one_or_none()
+            if not global_comp:
+                global_comp = Competition(
+                    name="Global Sandbox",
+                    type=CompetitionType.PUBLIC,
+                    status=CompetitionStatus.ACTIVE,
+                    starting_balance=Decimal("100000.00")
                 )
-                session.add(ms)
+                session.add(global_comp)
+                await session.flush()
+
+            # Seed 4 Assets
+            assets_to_seed = [
+                ("SYNX", "Synthex SYNX", Decimal("150.00")),
+                ("NEXO", "Synthex NEXO", Decimal("45.50")),
+                ("VRTX", "Synthex VRTX", Decimal("210.25")),
+                ("AEGS", "Synthex AEGS", Decimal("85.00")),
+            ]
+
+            for symbol, name, base_price in assets_to_seed:
+                asset_r = await session.execute(
+                    select(Asset).where(Asset.symbol == symbol)
+                )
+                asset = asset_r.scalar_one_or_none()
+                if not asset:
+                    asset = Asset(symbol=symbol, name=name)
+                    session.add(asset)
+                    await session.flush()
+
+                # Market state
+                ms_r = await session.execute(
+                    select(MarketState).where(MarketState.asset_id == asset.id)
+                )
+                ms = ms_r.scalar_one_or_none()
+                if not ms:
+                    ms = MarketState(
+                        asset_id=asset.id,
+                        fair_value=base_price,
+                        last_traded_price=base_price,
+                    )
+                    session.add(ms)
 
     logger.info("Seed data ready.")
 
@@ -278,10 +281,10 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
                     session.add(participant)
                     await session.flush()
                     
-                    # Create initial ORIS holding for participant
-                    asset_r = await session.execute(select(Asset).where(Asset.symbol == "ORIS"))
-                    asset = asset_r.scalar_one_or_none()
-                    if asset:
+                    # Create initial holdings for participant for all assets
+                    assets_r = await session.execute(select(Asset))
+                    assets = assets_r.scalars().all()
+                    for asset in assets:
                         holding = Holding(participant_id=participant.id, asset_id=asset.id, quantity=Decimal("0"))
                         session.add(holding)
 
@@ -316,7 +319,7 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
             if msg_type == "MARKET_ORDER":
                 data = raw.get("data", {})
                 action = data.get("action", "")
-                symbol = data.get("symbol", "ORIS")
+                symbol = data.get("symbol", "SYNX")
                 quantity = data.get("quantity", 0)
 
                 # Basic validation
@@ -399,8 +402,107 @@ async def ws_trade(websocket: WebSocket, competition_id: uuid.UUID):
 
 
 # ---------------------------------------------------------------------------
+# REST API (Competitions)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/competitions/active")
+async def get_active_competitions():
+    """Return a list of all ACTIVE or WAITING public competitions."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Competition).where(
+                Competition.status.in_([CompetitionStatus.WAITING, CompetitionStatus.ACTIVE]),
+                Competition.type == CompetitionType.PUBLIC
+            )
+        )
+        comps = result.scalars().all()
+        return [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "status": c.status.value,
+                "starting_balance": float(c.starting_balance),
+                "created_at": c.created_at.isoformat()
+            } for c in comps
+        ]
+
+
+# ---------------------------------------------------------------------------
 # REST Admin API
 # ---------------------------------------------------------------------------
+
+@app.post("/api/admin/competitions/{competition_id}/complete")
+async def complete_competition(
+    competition_id: uuid.UUID,
+    _: None = Depends(verify_admin_key),
+):
+    """
+    Settle all holdings for the competition at closing prices, 
+    update PnL, set to COMPLETED, and broadcast final leaderboard.
+    """
+    async with async_session() as session:
+        async with session.begin():
+            # Get competition
+            comp_r = await session.execute(select(Competition).where(Competition.id == competition_id))
+            comp = comp_r.scalar_one_or_none()
+            if not comp:
+                raise HTTPException(status_code=404, detail="Competition not found")
+            
+            if comp.status == CompetitionStatus.COMPLETED:
+                raise HTTPException(status_code=400, detail="Competition already completed")
+
+            # Get market states to find last_traded_price for each asset
+            ms_r = await session.execute(
+                select(Asset.symbol, MarketState.last_traded_price)
+                .join(MarketState, MarketState.asset_id == Asset.id)
+            )
+            ltp_map = {row.symbol: row.last_traded_price for row in ms_r.all()}
+
+            # Liquidate all participants in this competition
+            participants_r = await session.execute(
+                select(Participant).where(Participant.competition_id == competition_id)
+            )
+            participants = participants_r.scalars().all()
+
+            for p in participants:
+                # Find holdings
+                holdings_r = await session.execute(
+                    select(Holding, Asset.symbol)
+                    .join(Asset, Asset.id == Holding.asset_id)
+                    .where(Holding.participant_id == p.id)
+                )
+                total_fiat_gain = Decimal("0.00")
+                for holding, symbol in holdings_r.all():
+                    if holding.quantity > 0:
+                        closing_price = ltp_map.get(symbol, Decimal("0.00"))
+                        total_fiat_gain += holding.quantity * closing_price
+                
+                # Update participant fiat and pnl
+                p.current_fiat += total_fiat_gain
+                p.current_asset = Decimal("0.00")
+                p.realized_pnl = p.current_fiat - comp.starting_balance
+                
+                # Delete holdings
+                await session.execute(delete(Holding).where(Holding.participant_id == p.id))
+
+            comp.status = CompetitionStatus.COMPLETED
+
+        # Broadcast the final leaderboard
+        lb = await get_leaderboard(async_session, competition_id)
+        if competition_id in manager._rooms:
+            await manager.broadcast_to_room(
+                competition_id, 
+                {"type": "leaderboard_update", "data": lb}
+            )
+            # Notify clients to lock UI and show podium
+            await manager.broadcast_to_room(
+                competition_id,
+                {"type": "competition_completed", "data": {"message": "Competition has ended."}}
+            )
+
+        return {"status": "success", "message": f"Competition {competition_id} settled and completed."}
+
+
 
 @app.post("/api/admin/inject-news", response_model=InjectNewsResponse)
 async def inject_news(
@@ -425,14 +527,17 @@ async def inject_news(
             await session.flush()
             event_id = str(event.id)
 
-            # Apply magnitude to fair value immediately
-            ms_r = await session.execute(select(MarketState).limit(1).with_for_update())
-            ms = ms_r.scalar_one()
-            new_fv = ms.fair_value * Decimal(str(1 + req.magnitude))
-            new_fv = max(new_fv, Decimal("0.01"))
-            ms.fair_value = new_fv
-            ms.updated_at = now
-            asset_id = ms.asset_id
+            # Apply magnitude to fair value immediately for all assets
+            ms_r = await session.execute(select(MarketState, Asset).join(Asset).with_for_update())
+            market_states = ms_r.all()
+            
+            updated_fvs = []
+            for ms, asset in market_states:
+                new_fv = ms.fair_value * Decimal(str(1 + req.magnitude))
+                new_fv = max(new_fv, Decimal("0.01"))
+                ms.fair_value = new_fv
+                ms.updated_at = now
+                updated_fvs.append((asset, new_fv))
 
             # Immediate House Bot re-quote for all ACTIVE competitions
             bot_r = await session.execute(
@@ -456,20 +561,24 @@ async def inject_news(
                 )
                 hb_part = part_r.scalar_one_or_none()
                 if hb_part:
-                    best_bid, best_ask = await house_bot_requote(
-                        session, hb_part.id, comp.id, asset_id, new_fv, half_spread, bot_qty,
-                    )
-                    ob_payload = {
-                        "type": "orderbook_update",
-                        "data": {
+                    assets_data = []
+                    for asset, new_fv in updated_fvs:
+                        bb, ba = await house_bot_requote(
+                            session, hb_part.id, comp.id, asset.id, new_fv, half_spread, bot_qty,
+                        )
+                        best_bid, best_ask = bb, ba  # Keep last one for response
+                        assets_data.append({
                             "timestamp": int(time.time() * 1000),
-                            "symbol": "ORIS",
-                            "best_bid": best_bid,
-                            "best_ask": best_ask,
-                            "spread": round(best_ask - best_bid, 6),
+                            "symbol": asset.symbol,
+                            "best_bid": bb,
+                            "best_ask": ba,
+                            "spread": round(ba - bb, 6),
                             "bid_quantity": settings.HOUSE_BOT_QUANTITY,
                             "ask_quantity": settings.HOUSE_BOT_QUANTITY,
-                        },
+                        })
+                    ob_payload = {
+                        "type": "orderbook_update",
+                        "data": assets_data,
                     }
                     await manager.broadcast_to_room(comp.id, ob_payload)
 
@@ -489,9 +598,9 @@ async def inject_news(
         status="success",
         event_id=event_id,
         message="News event injected. House Bot requoted across active competitions. Clients notified.",
-        new_fair_value_approx=round(float(new_fv), 2),
-        new_best_bid=best_bid or float(new_fv),
-        new_best_ask=best_ask or float(new_fv),
+        new_fair_value_approx=round(float(updated_fvs[0][1] if updated_fvs else 0), 2),
+        new_best_bid=best_bid or 0.0,
+        new_best_ask=best_ask or 0.0,
     )
 
 
@@ -558,14 +667,34 @@ async def reset_session(_: None = Depends(verify_admin_key)):
             await session.execute(delete(Participant))
             await session.execute(delete(Competition))
 
-            # Reset market state
-            await session.execute(
-                update(MarketState).values(
-                    fair_value=Decimal(str(settings.INITIAL_FAIR_VALUE)),
-                    last_traded_price=Decimal(str(settings.INITIAL_FAIR_VALUE)),
-                    updated_at=datetime.now(timezone.utc),
-                )
+            # Re-seed Global Sandbox
+            global_comp = Competition(
+                name="Global Sandbox",
+                type=CompetitionType.PUBLIC,
+                status=CompetitionStatus.ACTIVE,
+                starting_balance=Decimal("100000.00")
             )
+            session.add(global_comp)
+            await session.flush()
+
+            # Reset market state
+            assets_to_seed = {
+                "SYNX": Decimal("150.00"),
+                "NEXO": Decimal("45.50"),
+                "VRTX": Decimal("210.25"),
+                "AEGS": Decimal("85.00"),
+            }
+            for symbol, base_price in assets_to_seed.items():
+                asset_r = await session.execute(select(Asset).where(Asset.symbol == symbol))
+                asset = asset_r.scalar_one_or_none()
+                if asset:
+                    await session.execute(
+                        update(MarketState).where(MarketState.asset_id == asset.id).values(
+                            fair_value=base_price,
+                            last_traded_price=base_price,
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                    )
             # Deactivate all news
             await session.execute(
                 update(NewsEvent).values(is_active=False)
